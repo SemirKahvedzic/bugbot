@@ -39,6 +39,12 @@ export function registerHome(app: App, context: BugbotContext): void {
     keepAlive(publishHomeFor(context, body.user.id), 'homeRefresh');
   });
 
+  // A URL button still produces an interaction. Acknowledging it is all that
+  // is needed; without this, every "Open" click logs an unhandled request.
+  app.action(ACTION.openIssue, async ({ ack }) => {
+    await ack();
+  });
+
   app.action(ACTION.homeFileBug, async ({ ack, body, client }) => {
     await ack();
     const triggerId = (body as { trigger_id?: string }).trigger_id;

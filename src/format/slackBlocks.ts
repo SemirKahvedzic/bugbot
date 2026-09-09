@@ -169,6 +169,94 @@ export interface IssueSummaryLine {
   status: string;
   priority?: string;
   updated?: string;
+  /** Carried so App Home cards can show the QA fields (SPEC 9.3: labels). */
+  labels?: string[];
+  created?: string;
+  assigneeName?: string;
+}
+
+/**
+ * A dot per status category, so a column of cards is scannable without
+ * reading. Matched on the name rather than the id because the names are
+ * config and the ids are not.
+ */
+export function statusEmoji(status: string): string {
+  const s = status.toLowerCase();
+  if (/under triage/.test(s)) return ':large_yellow_circle:';
+  if (/in progress|in review|in qa/.test(s)) return ':large_blue_circle:';
+  if (/ready for validation|ready/.test(s)) return ':large_purple_circle:';
+  if (/rejected|duplicate|cannot reproduce/.test(s)) return ':white_circle:';
+  if (/done/.test(s)) return ':white_check_mark:';
+  return ':black_circle:';
+}
+
+/**
+ * "3 days ago". Deliberately coarse: on a bug list the difference between
+ * 71 and 73 hours never matters, but "3 days" versus "3 weeks" always does.
+ */
+export function relativeTime(iso: string | undefined, now = Date.now()): string | undefined {
+  if (!iso) return undefined;
+  const then = new Date(iso).getTime();
+  if (!Number.isFinite(then)) return undefined;
+
+  const seconds = Math.round((now - then) / 1000);
+  if (seconds < 0) return 'just now';
+  if (seconds < 90) return 'just now';
+
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.round(hours / 24);
+  if (days < 14) return `${days} day${days === 1 ? '' : 's'} ago`;
+  const weeks = Math.round(days / 7);
+  if (weeks < 9) return `${weeks} weeks ago`;
+  return `${Math.round(days / 30)} months ago`;
+}
+
+/**
+ * One bug as a card: a titled section with a link out, then a metadata line.
+ *
+ * Used on App Home, where there is room to browse. `/mybugs` keeps the compact
+ * list - it is a quick peek in an ephemeral message, and twenty cards there
+ * would bury the answer rather than show it.
+ */
+export function bugCardBlocks(baseUrl: string, issue: IssueSummaryLine): AnyBlock[] {
+  const parsed = parseLabels(issue.labels);
+  const url = issueUrl(baseUrl, issue.key);
+
+  const detail = [parsed.app, parsed.env, parsed.dev].filter(Boolean).join(' · ');
+  const quality = [parsed.sev && `severity ${parsed.sev}`, parsed.freq && `happens ${parsed.freq}`]
+    .filter(Boolean)
+    .join(', ');
+
+  const meta = [
+    issue.priority ? `*${escape(issue.priority)}*` : undefined,
+    detail ? escape(detail) : undefined,
+    quality ? escape(quality) : undefined,
+    issue.assigneeName ? `assigned to ${escape(issue.assigneeName)}` : 'unassigned',
+    relativeTime(issue.created) ? `filed ${relativeTime(issue.created)}` : undefined,
+  ].filter(Boolean);
+
+  return [
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text:
+          `${statusEmoji(issue.status)}  *<${url}|${issue.key}>*  ${escape(issue.status)}\n` +
+          escape(truncate(issue.summary, 200)),
+      },
+      accessory: {
+        type: 'button',
+        action_id: ACTION.openIssue,
+        text: { type: 'plain_text', text: 'Open' },
+        url,
+      },
+    },
+    context(meta.join('  •  ')),
+    { type: 'divider' },
+  ];
 }
 
 const STATUS_BUCKETS: Array<{ label: string; matches: (status: string) => boolean }> = [
@@ -209,7 +297,6 @@ export function myBugsBlocks(input: {
   issues: IssueSummaryLine[];
   jqlUrl: string;
   limit: number;
-  forHome?: boolean;
 }): AnyBlock[] {
   if (input.issues.length === 0) {
     return [
@@ -236,36 +323,74 @@ export function myBugsBlocks(input: {
   return blocks;
 }
 
+/**
+ * Slack rejects a view over 100 blocks outright, which would leave App Home
+ * blank rather than truncated. Each card is three blocks, so this keeps the
+ * total well under the cap however high the caller's limit is set.
+ */
+export const HOME_MAX_CARDS = 25;
+
 export function homeView(input: {
   baseUrl: string;
   issues: IssueSummaryLine[];
   jqlUrl: string;
   limit: number;
 }): HomeView {
-  return {
-    type: 'home',
-    blocks: [
-      section('*Your bug reports*'),
-      {
-        type: 'actions',
-        elements: [
-          {
-            type: 'button',
-            action_id: ACTION.homeFileBug,
-            style: 'primary',
-            text: { type: 'plain_text', text: 'Report a bug' },
-          },
-          {
-            type: 'button',
-            action_id: ACTION.homeRefresh,
-            text: { type: 'plain_text', text: 'Refresh' },
-          },
-        ],
-      },
-      { type: 'divider' },
-      ...myBugsBlocks({ ...input, forHome: true }),
-    ],
-  };
+  const blocks: AnyBlock[] = [
+    { type: 'header', text: { type: 'plain_text', text: 'Your bug reports' } },
+    {
+      type: 'actions',
+      elements: [
+        {
+          type: 'button',
+          action_id: ACTION.homeFileBug,
+          style: 'primary',
+          text: { type: 'plain_text', text: 'Report a bug' },
+        },
+        {
+          type: 'button',
+          action_id: ACTION.homeRefresh,
+          text: { type: 'plain_text', text: 'Refresh' },
+        },
+      ],
+    },
+  ];
+
+  if (input.issues.length === 0) {
+    blocks.push(
+      section(
+        'You have not reported any bugs yet. Hit *Report a bug*, or run `/bug` in a channel, and ' +
+          'they will show up here.',
+      ),
+    );
+    return { type: 'home', blocks };
+  }
+
+  const shown = input.issues.slice(0, Math.min(input.limit, HOME_MAX_CARDS));
+  const buckets = bucketIssues(shown);
+
+  // Counts first, so the shape of the queue is visible before any scrolling.
+  blocks.push(
+    context(buckets.map((bucket) => `${bucket.label} *${bucket.issues.length}*`).join('  •  ')),
+    { type: 'divider' },
+  );
+
+  for (const bucket of buckets) {
+    blocks.push(section(`*${bucket.label}*`));
+    for (const issue of bucket.issues) {
+      blocks.push(...bugCardBlocks(input.baseUrl, issue));
+    }
+  }
+
+  blocks.push(
+    context(
+      input.issues.length > shown.length
+        ? `Showing ${shown.length} of ${input.issues.length}. <${input.jqlUrl}|View all in Jira>`
+        : `<${input.jqlUrl}|View all in Jira>`,
+    ),
+  );
+
+  return { type: 'home', blocks };
 }
 
 /** The `/triage` queue, one actionable row per bug (SPEC 7). */

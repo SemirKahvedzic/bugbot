@@ -9,6 +9,12 @@ export const ACTION = {
   leaderReassign: 'leader_reassign',
   homeRefresh: 'home_refresh',
   homeFileBug: 'home_file_bug',
+  /**
+   * A link button on an App Home card. Slack sends an interaction even for a
+   * pure URL button, so it needs a handler that does nothing but acknowledge -
+   * otherwise every click logs an unhandled request.
+   */
+  openIssue: 'open_issue',
 } as const;
 
 export const SHORTCUT = {

@@ -85,6 +85,9 @@ export function toSummaryLine(issue: {
     status?: { name: string };
     priority?: { name: string } | null;
     updated?: string;
+    created?: string;
+    labels?: string[];
+    assignee?: { displayName?: string } | null;
   };
 }): IssueSummaryLine {
   return {
@@ -93,6 +96,13 @@ export function toSummaryLine(issue: {
     status: issue.fields.status?.name ?? 'Unknown',
     ...(issue.fields.priority?.name ? { priority: issue.fields.priority.name } : {}),
     ...(issue.fields.updated ? { updated: issue.fields.updated } : {}),
+    // Carried for the App Home cards: labels hold the QA fields, and created
+    // plus assignee answer "how old is this and is anyone on it".
+    ...(issue.fields.created ? { created: issue.fields.created } : {}),
+    ...(issue.fields.labels ? { labels: issue.fields.labels } : {}),
+    ...(issue.fields.assignee?.displayName
+      ? { assigneeName: issue.fields.assignee.displayName }
+      : {}),
   };
 }
 
