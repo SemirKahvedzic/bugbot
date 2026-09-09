@@ -178,10 +178,46 @@ export function registerFileSync(app: App, context: BugbotContext): void {
       files?: SlackFile[];
     };
 
-    // Only threaded file shares from humans are of any interest.
+    // Our own messages are not reports.
     if (message.bot_id) return;
-    if (!message.files || message.files.length === 0) return;
-    if (!message.channel || !message.ts || !message.thread_ts) return;
+
+    // Anything that is not a file share is the overwhelming majority of
+    // channel traffic, so it leaves before any logging.
+    const looksLikeFileShare = message.subtype === 'file_share' || Boolean(message.files?.length);
+    if (!looksLikeFileShare) return;
+
+    // From here on every branch says something. A file share that produces no
+    // log line at all means the event never reached this handler, which is a
+    // different problem from the ones below - and telling those apart without
+    // a line here is guesswork.
+    context.log.info(
+      {
+        subtype: message.subtype,
+        files: message.files?.length ?? 0,
+        threaded: Boolean(message.thread_ts),
+        channel: message.channel,
+      },
+      'file share event received',
+    );
+
+    if (!message.files || message.files.length === 0) {
+      // Slack has more than one upload path, and not all of them put the file
+      // on the message event. If this appears, the `file_shared` event is the
+      // one to subscribe to instead.
+      context.log.warn(
+        { subtype: message.subtype },
+        'file share carried no files array - nothing to attach',
+      );
+      return;
+    }
+
+    if (!message.channel || !message.ts || !message.thread_ts) {
+      context.log.info(
+        { threaded: Boolean(message.thread_ts) },
+        'file was not posted as a thread reply - only files in a bug thread are attached',
+      );
+      return;
+    }
 
     // Downloading and uploading files is far too slow to hold the event
     // response open.
