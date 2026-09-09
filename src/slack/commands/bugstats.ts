@@ -103,10 +103,14 @@ export function statsBlocks(stats: Stats): AnyBlock[] {
   const backlog = stats.routing.find((row) => row.routedTo === 'backlog')?.count ?? 0;
   const sprint = stats.routing.find((row) => row.routedTo === 'sprint')?.count ?? 0;
   const closed = stats.routing.find((row) => row.routedTo === 'closed')?.count ?? 0;
+  // Moves made by hand from App Home, as opposed to by a routing rule. Only
+  // shown when there are any, so the line does not read as a reproach.
+  const manual = stats.routing.find((row) => row.routedTo === 'manual')?.count ?? 0;
   lines.push(
     '',
     '*Triage outcomes*',
-    `backlog ${backlog}  •  sprint lane ${sprint}  •  closed without work ${closed}`,
+    `backlog ${backlog}  •  sprint lane ${sprint}  •  closed without work ${closed}` +
+      (manual > 0 ? `  •  moved by hand ${manual}` : ''),
   );
 
   lines.push(

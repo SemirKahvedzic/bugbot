@@ -107,6 +107,9 @@ Covered by unit tests, but never exercised against the live services:
   admin. Until then the native-intake half of the funnel, its feed card, status-change DMs and
   all of SPEC 7 routing are untested against the live site.
 - **The message shortcut, `/mybugs`, App Home, `/triage` and `/bugstats`** have not been used.
+- **Moving a card from App Home** has not been exercised against the real SUP workflow. Which
+  transitions it actually allows from each status is unknown until somebody clicks; the code
+  reports what is reachable rather than assuming.
 - **Whether `Under Triage` → `To Do` exists as a *transition***. The statuses all exist, but the
   workflow is restricted rather than global, so reaching `To Do` from `Under Triage` still needs
   checking with `npm run discover -- --issue=<key>` on an issue actually in triage. If it is
@@ -706,6 +709,36 @@ Under Triage / In Progress / Ready for Validation / Closed. Both union the issue
 recorded with `reporter = <accountId>` in Jira, so bugs filed both ways appear in one list. Any
 other status change sends one short DM, rate-limited to one per issue per five minutes.
 
+**Working the board from App Home.** A triager's Home has a second section, *Open bugs on the
+board* — every SUP issue whose status category is not Done, so bugs filed straight into Jira by a
+developer are there too — and every card carries a **Move to…** menu that transitions the issue.
+That is what makes the board workable from Slack without opening Jira.
+
+The menu is built from `meta.statusNames()`, the live `Finding` workflow read at boot, so it
+offers exactly the columns the board has and cannot drift. It does *not* pre-check which moves the
+workflow allows: that would be a Jira call per card on every Home render. The transition is
+resolved on the click instead, and a refusal DMs you what *is* reachable from where the issue sits
+— which matters, because SUP's workflow is restricted and "no transition from here to there" is
+routine rather than exotic.
+
+A successful move says nothing: republishing Home shows the card in its new column, which is the
+feedback. A block action inside App Home carries no `response_url`, so everything else — a
+refusal, an error, a stale view — arrives as a DM.
+
+Both the section and the menus are for triagers only, the same list `/triage` uses. A reporter
+should not be able to send their own bug to *Done*, and a control that changes Jira state for the
+whole team does not belong on their card. The handler re-checks on the click as well, since a Home
+view can outlive somebody's removal from the list.
+
+Every move writes a `triage_events` row with `routed_to = 'manual'`, kept apart from the routing
+destinations so `/bugstats` can tell a decision somebody made from one a rule made, and the
+reporter is DM'd in their bug thread — deduped on `from -> to`, so a double click cannot send two.
+Moving your own bug tells you nothing, which would be noise.
+
+One honest cost: the Jira change is made by the shared service account, so Jira history shows
+BugBot rather than the person who clicked. The Slack log line records the human. A dedicated
+`bugbot@` account does not fix that either — only per-user OAuth would, which is not worth it here.
+
 **`/bugstats`** prints intake by application and severity, the backlog/sprint/closed split, the
 median time in triage and the top three reporters. `/bugstats post` shares it in `#soft-world`.
 
@@ -733,7 +766,7 @@ src/
     notify.ts                 every outbound Slack call, in one place
     actions.ts                interaction ids
     files.ts                  thread attachment sync
-    home.ts                   App Home
+    home.ts                   App Home: own reports, the board for triagers, Move to...
     commands/bug.ts           /bug and the form submission
     commands/mybugs.ts        /mybugs and the shared query
     commands/triage.ts        /triage, its buttons, the leader buttons
@@ -745,6 +778,7 @@ src/
     suggest.ts                severity x frequency -> priority (SPEC 6)
     route.ts                  THE routing rules, pure
     apply.ts                  the effects of a routing decision
+    move.ts                   moving a bug to a column chosen by hand
     leaders.ts                per-application team leader lookup
   format/
     adf.ts                    Atlassian Document Format builders

@@ -215,7 +215,7 @@ async function resolutionMessage(
  * Silently does nothing when the reporter is unknown, which is the documented
  * SPEC 4 outcome for a Jira-native bug we could not map to a Slack user.
  */
-async function tellReporter(
+export async function tellReporter(
   context: BugbotContext,
   input: {
     issueKey: string;

@@ -12,6 +12,7 @@ import { createLogger } from '../../src/logger.js';
 import { Leaders } from '../../src/triage/leaders.js';
 import type { BugbotContext } from '../../src/context.js';
 import type { Issue } from '../../src/jira/issues.js';
+import type { HomeView } from '@slack/types';
 import type { Priority } from '../../src/types.js';
 
 export const BASE_ENV = {
@@ -30,6 +31,18 @@ export const BASE_ENV = {
 } satisfies NodeJS.ProcessEnv;
 
 export const SERVICE_ACCOUNT_ID = 'acc-service';
+
+/** The SUP Finding workflow, as verified against the live site. */
+export const FAKE_STATUSES = [
+  'To Do',
+  'Under Triage',
+  'In Progress',
+  'Ready for Validation',
+  'Done',
+  'Rejected',
+  'Duplicate',
+  'Cannot Reproduce',
+];
 
 export interface PostedMessage {
   kind: 'channel' | 'dm';
@@ -54,6 +67,8 @@ export interface TestHarness {
   issuesByKey: Map<string, Issue>;
   /** Status names the fake workflow can transition to. Empty means "any". */
   allowedTransitions: Set<string>;
+  /** Every App Home view published, in order. */
+  homeViews: HomeView[];
   /** Mutate to change what Identity.forSlackUser reports. */
   identityResult: { displayName?: string; email?: string; jiraAccountId?: string };
   reset(): void;
@@ -71,6 +86,7 @@ export async function makeTestContext(
   const jiraCalls: JiraCall[] = [];
   const issuesByKey = new Map<string, Issue>();
   const allowedTransitions = new Set<string>();
+  const homeViews: HomeView[] = [];
 
   const flatten = (blocks: unknown): string => JSON.stringify(blocks ?? '');
 
@@ -95,7 +111,8 @@ export async function makeTestContext(
     async react() {
       return true;
     },
-    async publishHome() {
+    async publishHome(_userId: string, view: HomeView) {
+      homeViews.push(view);
       return true;
     },
     async permalink() {
@@ -150,6 +167,15 @@ export async function makeTestContext(
       const issue = issuesByKey.get(issueKey);
       if (issue) issue.fields.status = { id: '0', name: statusName };
       return true;
+    },
+    async transitionsFor(issueKey: string) {
+      const targets = allowedTransitions.size === 0 ? FAKE_STATUSES : [...allowedTransitions];
+      jiraCalls.push({ op: 'transitionsFor', issueKey });
+      return targets.map((name, index) => ({
+        id: String(index + 1),
+        name: 'To ' + name,
+        to: { id: String(index + 1), name },
+      }));
     },
     async addLabels(issueKey: string, labels: string[]) {
       jiraCalls.push({ op: 'addLabels', issueKey, detail: labels });
@@ -211,7 +237,13 @@ export async function makeTestContext(
     db,
     repo,
     jira,
-    meta: {},
+    // Only the parts anything reads. The real JiraMeta loads these from the
+    // live site at boot; here they are the workflow SUP actually has.
+    meta: {
+      statusNames: () => [...FAKE_STATUSES],
+      hasStatus: (name: string) =>
+        FAKE_STATUSES.some((status) => status.toLowerCase() === name.toLowerCase()),
+    },
     issues,
     slack: {},
     notifier,
@@ -235,6 +267,7 @@ export async function makeTestContext(
     db,
     repo,
     posts,
+    homeViews,
     jiraCalls,
     issuesByKey,
     allowedTransitions,
@@ -242,6 +275,7 @@ export async function makeTestContext(
     reset() {
       posts.length = 0;
       jiraCalls.length = 0;
+      homeViews.length = 0;
     },
   };
 }

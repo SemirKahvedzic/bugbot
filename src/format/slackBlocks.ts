@@ -3,7 +3,7 @@
  * rendering is unit tested and the handlers stay thin.
  */
 import type { AnyBlock, HomeView } from '@slack/types';
-import { ACTION } from '../slack/actions.js';
+import { ACTION, moveValue } from '../slack/actions.js';
 import { summariseForSlack } from './description.js';
 import {
   missingFields,
@@ -283,7 +283,57 @@ export function relativeTime(iso: string | undefined, now = Date.now()): string 
  * list - it is a quick peek in an ephemeral message, and twenty cards there
  * would bury the answer rather than show it.
  */
-export function bugCardBlocks(baseUrl: string, issue: IssueSummaryLine): AnyBlock[] {
+export interface BugCardOptions {
+  /**
+   * Status names to offer in a "Move to..." menu on the card. Omitted, or
+   * empty, leaves a read-only card with an Open button instead - which is what
+   * anyone who is not a triager sees.
+   */
+  moveTargets?: string[];
+}
+
+/** Slack rejects an option value over 75 characters - and the whole view with it. */
+const OPTION_VALUE_MAX = 75;
+
+/**
+ * The "Move to..." menu, or undefined when there is nowhere to move to.
+ *
+ * The options are every status in the workflow bar the one the issue is
+ * already in. Whether the workflow actually allows the move is *not* checked
+ * here: that would mean a Jira call per card on every Home render. It is
+ * resolved on the click instead, and a refusal reports what is reachable.
+ */
+function moveMenu(issue: IssueSummaryLine, targets: string[]) {
+  const current = issue.status.toLowerCase();
+
+  const options = targets
+    .filter((status) => status.toLowerCase() !== current)
+    .map((status) => ({ status, value: moveValue(issue.key, status) }))
+    // A status name long enough to blow the value limit would otherwise take
+    // the entire App Home view down with it, so it is dropped instead.
+    .filter((option) => option.value.length <= OPTION_VALUE_MAX);
+
+  if (options.length === 0) return undefined;
+
+  return {
+    type: 'static_select' as const,
+    action_id: ACTION.moveIssue,
+    placeholder: { type: 'plain_text' as const, text: 'Move to...' },
+    options: options.map((option) => ({
+      text: {
+        type: 'plain_text' as const,
+        text: `${statusEmoji(option.status)} ${truncate(option.status, 70)}`,
+      },
+      value: option.value,
+    })),
+  };
+}
+
+export function bugCardBlocks(
+  baseUrl: string,
+  issue: IssueSummaryLine,
+  options: BugCardOptions = {},
+): AnyBlock[] {
   const parsed = parseLabels(issue.labels);
   const url = issueUrl(baseUrl, issue.key);
 
@@ -309,16 +359,25 @@ export function bugCardBlocks(baseUrl: string, issue: IssueSummaryLine): AnyBloc
           `${statusEmoji(issue.status)}  *<${url}|${issue.key}>*  ${escape(issue.status)}\n` +
           escape(truncate(issue.summary, 200)),
       },
-      accessory: {
-        type: 'button',
-        action_id: ACTION.openIssue,
-        text: { type: 'plain_text', text: 'Open' },
-        url,
-      },
+      // One accessory slot, and the move menu earns it: the issue key in the
+      // text above is already a link to Jira, so an Open button next to it was
+      // duplicating what the card already had.
+      accessory: options.moveTargets?.length
+        ? (moveMenu(issue, options.moveTargets) ?? openButton(url))
+        : openButton(url),
     },
     context(meta.join('  •  ')),
     { type: 'divider' },
   ];
+}
+
+function openButton(url: string) {
+  return {
+    type: 'button' as const,
+    action_id: ACTION.openIssue,
+    text: { type: 'plain_text' as const, text: 'Open' },
+    url,
+  };
 }
 
 const STATUS_BUCKETS: Array<{ label: string; matches: (status: string) => boolean }> = [
@@ -387,17 +446,93 @@ export function myBugsBlocks(input: {
 
 /**
  * Slack rejects a view over 100 blocks outright, which would leave App Home
- * blank rather than truncated. Each card is three blocks, so this keeps the
- * total well under the cap however high the caller's limit is set.
+ * blank rather than truncated. Each card is three blocks, so these keep the
+ * total under the cap however high the caller's limit is set.
  */
 export const HOME_MAX_CARDS = 25;
+/**
+ * Own-report cards shown when the board section is there too. A triager cares
+ * about the board more than their own list, so their own section gives up the
+ * room rather than the board losing it.
+ */
+export const HOME_MAX_CARDS_WITH_BOARD = 8;
+export const HOME_MAX_BOARD_CARDS = 15;
+export const HOME_BLOCK_LIMIT = 100;
+
+/**
+ * Slack refuses an over-long view whole rather than trimming the excess, so
+ * App Home would silently stop updating. The arithmetic above should keep it
+ * from happening; this makes sure a miscount degrades into a shorter list
+ * instead of a blank tab.
+ */
+export function trimBlocks(blocks: AnyBlock[], limit = HOME_BLOCK_LIMIT): AnyBlock[] {
+  if (blocks.length <= limit) return blocks;
+  return [
+    ...blocks.slice(0, limit - 1),
+    context('Too many bugs to show here. Open the board in Jira for the rest.'),
+  ];
+}
+
+/** One list of bug cards: the counts, the buckets, the cards, the footer. */
+function cardSection(input: {
+  baseUrl: string;
+  issues: IssueSummaryLine[];
+  limit: number;
+  jqlUrl: string;
+  empty: string;
+  cards: BugCardOptions;
+}): AnyBlock[] {
+  if (input.issues.length === 0) return [section(input.empty)];
+
+  const shown = input.issues.slice(0, input.limit);
+  const buckets = bucketIssues(shown);
+  const blocks: AnyBlock[] = [
+    // Counts first, so the shape of the queue is visible before any scrolling.
+    context(buckets.map((bucket) => `${bucket.label} *${bucket.issues.length}*`).join('  •  ')),
+    { type: 'divider' },
+  ];
+
+  for (const bucket of buckets) {
+    blocks.push(section(`*${bucket.label}*`));
+    for (const issue of bucket.issues) {
+      blocks.push(...bugCardBlocks(input.baseUrl, issue, input.cards));
+    }
+  }
+
+  blocks.push(
+    context(
+      input.issues.length > shown.length
+        ? `Showing ${shown.length} of ${input.issues.length}. <${input.jqlUrl}|View all in Jira>`
+        : `<${input.jqlUrl}|View all in Jira>`,
+    ),
+  );
+
+  return blocks;
+}
 
 export function homeView(input: {
   baseUrl: string;
   issues: IssueSummaryLine[];
   jqlUrl: string;
   limit: number;
+  /**
+   * Every open bug on the board. Given only for a triager, because for anyone
+   * else it is a list of bugs they cannot act on and did not ask about.
+   */
+  boardIssues?: IssueSummaryLine[];
+  boardJqlUrl?: string;
+  /**
+   * Statuses the "Move to..." menu offers. Given only for a triager: a control
+   * that changes Jira state for the whole team does not belong on a reporter's
+   * card.
+   */
+  moveTargets?: string[];
 }): HomeView {
+  const hasBoard = input.boardIssues !== undefined;
+  const cards: BugCardOptions = input.moveTargets?.length
+    ? { moveTargets: input.moveTargets }
+    : {};
+
   const blocks: AnyBlock[] = [
     { type: 'header', text: { type: 'plain_text', text: 'Your bug reports' } },
     {
@@ -416,43 +551,34 @@ export function homeView(input: {
         },
       ],
     },
+    ...cardSection({
+      baseUrl: input.baseUrl,
+      issues: input.issues,
+      limit: Math.min(input.limit, hasBoard ? HOME_MAX_CARDS_WITH_BOARD : HOME_MAX_CARDS),
+      jqlUrl: input.jqlUrl,
+      empty:
+        'You have not reported any bugs yet. Hit *Report a bug*, or run `/bug` in a channel, ' +
+        'and they will show up here.',
+      cards,
+    }),
   ];
 
-  if (input.issues.length === 0) {
+  if (input.boardIssues) {
     blocks.push(
-      section(
-        'You have not reported any bugs yet. Hit *Report a bug*, or run `/bug` in a channel, and ' +
-          'they will show up here.',
-      ),
+      { type: 'divider' },
+      { type: 'header', text: { type: 'plain_text', text: 'Open bugs on the board' } },
+      ...cardSection({
+        baseUrl: input.baseUrl,
+        issues: input.boardIssues,
+        limit: HOME_MAX_BOARD_CARDS,
+        jqlUrl: input.boardJqlUrl ?? input.jqlUrl,
+        empty: ':tada: Nothing open on the board.',
+        cards,
+      }),
     );
-    return { type: 'home', blocks };
   }
 
-  const shown = input.issues.slice(0, Math.min(input.limit, HOME_MAX_CARDS));
-  const buckets = bucketIssues(shown);
-
-  // Counts first, so the shape of the queue is visible before any scrolling.
-  blocks.push(
-    context(buckets.map((bucket) => `${bucket.label} *${bucket.issues.length}*`).join('  •  ')),
-    { type: 'divider' },
-  );
-
-  for (const bucket of buckets) {
-    blocks.push(section(`*${bucket.label}*`));
-    for (const issue of bucket.issues) {
-      blocks.push(...bugCardBlocks(input.baseUrl, issue));
-    }
-  }
-
-  blocks.push(
-    context(
-      input.issues.length > shown.length
-        ? `Showing ${shown.length} of ${input.issues.length}. <${input.jqlUrl}|View all in Jira>`
-        : `<${input.jqlUrl}|View all in Jira>`,
-    ),
-  );
-
-  return { type: 'home', blocks };
+  return { type: 'home', blocks: trimBlocks(blocks) };
 }
 
 /** The `/triage` queue, one actionable row per bug (SPEC 7). */

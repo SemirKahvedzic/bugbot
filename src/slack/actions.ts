@@ -15,7 +15,28 @@ export const ACTION = {
    * otherwise every click logs an unhandled request.
    */
   openIssue: 'open_issue',
+  /** The "Move to..." menu on an App Home card. */
+  moveIssue: 'move_issue',
 } as const;
+
+/**
+ * A Slack option carries one string, and a move needs two things: which issue
+ * and which status. They travel joined by "::" - a separator no Jira status
+ * name or issue key contains.
+ */
+export function moveValue(issueKey: string, statusName: string): string {
+  return `${issueKey}::${statusName}`;
+}
+
+export function parseMoveValue(
+  value: string,
+): { issueKey: string; statusName: string } | undefined {
+  const at = value.indexOf('::');
+  if (at <= 0) return undefined;
+  const issueKey = value.slice(0, at);
+  const statusName = value.slice(at + 2);
+  return statusName ? { issueKey, statusName } : undefined;
+}
 
 export const SHORTCUT = {
   reportAsBug: 'report_as_bug',

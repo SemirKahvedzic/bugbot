@@ -33,7 +33,8 @@ export interface TriageEventInput {
   fromStatus?: string;
   toStatus?: string;
   priority?: string;
-  routedTo?: 'backlog' | 'sprint' | 'closed' | 'none';
+  /** 'manual' is a triager choosing a column by hand, not a routing rule. */
+  routedTo?: 'backlog' | 'sprint' | 'closed' | 'none' | 'manual';
   actorAccountId?: string;
 }
 
