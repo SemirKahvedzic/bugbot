@@ -54,6 +54,23 @@ locally:
   ("bad secret - rejected"), a payload for another project gives 200 then
   "webhook for another project - rejected", and an unparseable body gives 400.
 
+### Why there is no build step on Vercel
+
+`vercel.json` sets `"framework": null` and `"buildCommand": null` on purpose, and those settings
+live in the repo rather than the dashboard so they cannot drift.
+
+This is a service made of one function. There is no static output, so there is nothing for a
+build step to produce. With a build command configured, Vercel ran `npm run build`, found no
+`public/` directory afterwards and failed the whole deployment with *"No Output Directory named
+public found after the Build completed"* — and before that, while the build was still being
+tolerated, Vercel's static-serving layer owned `/`, which is what made the bare root return
+`FUNCTION_INVOCATION_FAILED` while every other path worked.
+
+Vercel compiles `api/index.ts` and traces `src/**` by itself, so `npm run build` is only for the
+Docker image and local use. If the dashboard ever shows a Build Command or Output Directory
+again, clear both: `vercel.json` should win, but two sources of truth for this is how the
+deployment broke in the first place.
+
 ### Known issue: the bare `/` path
 
 `https://bugbot-eight.vercel.app/` returns `FUNCTION_INVOCATION_FAILED`. Every other path is
