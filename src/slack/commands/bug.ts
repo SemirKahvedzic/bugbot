@@ -138,6 +138,45 @@ export async function fileBug(
     const threadTs = input.metadata.threadTs ?? posted.ts;
     await repo.setThread(issue.key, posted.channel, threadTs);
     await linkBackToSlack(context, { issueKey: issue.key, report, channel: posted.channel, threadTs });
+  } else if (!posted.ok && input.metadata.channelId) {
+    // The channel post failed, and almost always for one reason: the bot was
+    // never invited there. The issue exists, so the reporter must not be left
+    // thinking nothing happened - which is exactly what used to occur, because
+    // Notifier logs a failed post and swallows it.
+    //
+    // No thread is recorded: a DM cannot receive the file events attachment
+    // sync needs, so promising it here would be a lie.
+    log.warn(
+      { issueKey: issue.key, channel: input.metadata.channelId },
+      'could not post the confirmation in the channel - falling back to a DM. ' +
+        'The bot is probably not a member of it.',
+    );
+
+    await notifier.dm({
+      userId: input.slackUserId,
+      fallback: `${issue.key} filed: ${report.summary}`,
+      blocks: [
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text:
+              `:beetle: Filed *<${issueUrl(config.JIRA_BASE_URL, issue.key)}|${issue.key}>* — ` +
+              `${report.summary}\n_Suggested priority ${priority}._`,
+          },
+        },
+        {
+          type: 'section',
+          text: {
+            type: 'mrkdwn',
+            text:
+              `:warning: I could not post in <#${input.metadata.channelId}> because I am not in ` +
+              'that channel, so this is a DM instead. Invite me there and the confirmation ' +
+              'thread — and attaching screenshots to the issue — will work next time.',
+          },
+        },
+      ],
+    });
   }
 
   // The feed shows every new bug in one place, however it arrived.

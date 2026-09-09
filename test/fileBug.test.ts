@@ -194,6 +194,49 @@ describe('fileBug: linking Jira back to Slack', () => {
   });
 });
 
+describe('fileBug: when the bot is not in the channel', () => {
+  it('DMs the reporter with the issue rather than leaving them with nothing', async () => {
+    // chat.postMessage returns not_in_channel when the bot was never invited.
+    // Notifier logs that and swallows it, so without this fallback the issue
+    // exists in Jira and the reporter sees no sign of it at all.
+    const harness = await makeTestContext();
+    Object.assign(harness.context.notifier, {
+      post: async () => ({ ok: false }),
+    });
+
+    const result = await fileBug(harness.context, {
+      report: formFields,
+      metadata: { channelId: 'C_NOT_A_MEMBER', source: 'slack_modal' },
+      slackUserId: 'U_REPORTER',
+    });
+
+    expect(result.issueKey).toBe('SUP-100');
+
+    const dm = harness.posts.find((post) => post.target === 'U_REPORTER');
+    expect(dm?.text).toContain('SUP-100');
+    expect(dm?.text).toContain('C_NOT_A_MEMBER');
+    expect(dm?.text).toMatch(/not in that channel/i);
+    expect(dm?.text).toMatch(/invite me/i);
+  });
+
+  it('records no thread, because a DM cannot receive file events', async () => {
+    const harness = await makeTestContext();
+    Object.assign(harness.context.notifier, {
+      post: async () => ({ ok: false }),
+    });
+
+    await fileBug(harness.context, {
+      report: formFields,
+      metadata: { channelId: 'C_NOT_A_MEMBER', source: 'slack_modal' },
+      slackUserId: 'U_REPORTER',
+    });
+
+    // Promising attachment sync into a DM would be a lie, so no thread is
+    // stored and the DM says so instead.
+    expect((await harness.repo.getIssueReport('SUP-100'))?.slack_thread_ts).toBeNull();
+  });
+});
+
 describe('fileBug: when Jira refuses', () => {
   it('tells the reporter instead of losing the report silently', async () => {
     const broken = await makeTestContext();

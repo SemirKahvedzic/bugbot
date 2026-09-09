@@ -471,11 +471,23 @@ Do it in this order — the middle steps are not optional and the ordering is no
    is live. Then under **Subscribe to bot events** add `app_home_opened` and `message.channels`,
    and save. Slack will prompt to reinstall the app; accept.
 
-6. **Invite the bot to the channels.** In Slack: `/invite @BugBot` in `#soft-world` and
-   `#roarington-dev`. This is easy to forget and nothing works without it: `chat:write` only
-   posts to channels the bot is in, and `channels:history` only delivers events for those
-   channels — so without the invite the confirmation message and the whole attachment sync
-   silently do nothing.
+6. **Invite the bot to the channels.** In Slack: `/invite @BugBot` (the handle is whatever the
+   bot user ended up called — check the app's Bot User page) in every channel bugs get reported
+   in, and in the feed channel.
+
+   **An invite is all that adding a channel takes** — no app or scope changes. Public and private
+   channels are both covered: `channels:history` with `message.channels` for public,
+   `groups:history` with `message.groups` for private.
+
+   It is still easy to forget, and it used to fail quietly: `chat:write` only posts where the bot
+   is a member, and history events are only delivered for those channels, so the confirmation
+   message and the whole attachment sync did nothing with no error visible. Now a failed channel
+   post falls back to DMing the reporter the issue link and telling them to invite the bot — so a
+   missing invite is annoying rather than invisible.
+
+   The one other place a channel matters is `SLACK_BUG_CHANNEL_ALLOWLIST`: if it is set, `/bug`
+   is refused outside it, so a new channel has to be added there too and redeployed. Leaving it
+   unset allows `/bug` anywhere.
 
 7. **File a bug.** `/bug` in `#soft-world`.
 
