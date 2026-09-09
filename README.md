@@ -38,24 +38,53 @@ not verified yet*.
 | 4 | `/mybugs`, App Home, status-change DMs | built |
 | 5 | `/bugstats` digest | built |
 
-### What is not verified yet
+### Verified in production
+
+Deployed at `https://bugbot-eight.vercel.app`. Confirmed against the live deployment, not
+locally:
+
+- **The whole app boots on Vercel**: `bugbot ready`, `serverless: true`.
+- **Jira credentials work**, and the metadata resolves — `SUP (10396)`, `Finding (10481)`.
+- **All eight statuses exist on the `Finding` workflow**: `To Do`, `Under Triage`,
+  `In Progress`, `Ready for Validation`, `Rejected`, `Duplicate`, `Cannot Reproduce`, `Done`.
+  `assertStatusesExist` passing at boot is what proves it, so every status SPEC 7 routes on is
+  real. This was the last open question from Phase 0.
+- **Postgres works from Vercel**: `/readyz` returns `{"database":true,"jira":true}`.
+- **All three webhook guards, with logs to match**: a one-character-wrong secret gives 404
+  ("bad secret - rejected"), a payload for another project gives 200 then
+  "webhook for another project - rejected", and an unparseable body gives 400.
+
+### Known issue: the bare `/` path
+
+`https://bugbot-eight.vercel.app/` returns `FUNCTION_INVOCATION_FAILED`. Every other path is
+fine: `/healthz` and `/readyz` return 200, `/api` and `/nope` return 404 from the express app,
+and the webhook routes behave exactly as above — so the function, the rewrite and the app are
+all working, and the failure is specific to the root.
+
+An explicit root rewrite rule and a real `GET /` route both made no difference, and the Vercel
+log for the request shows no error at all, which points at the routing layer rather than the
+function. **Nothing depends on it**: Slack posts to `/slack/events`, Jira to
+`/jira/webhook/:secret`, and monitoring uses `/healthz`.
+
+Worth checking in the Vercel dashboard, under Settings → Build and Deployment: Framework Preset
+should be **Other**, with Build Command and Output Directory empty. An auto-detected framework
+would install its own root handling, which would explain a failure specific to `/`.
+
+### What is still not verified
 
 Everything below is covered by unit tests against recorded payloads, but has never spoken to the
 live services. Expect to work through these one at a time:
 
-- **No real Jira token has been used.** `npm run discover` has only been run with a deliberately
-  invalid token, which proved the report's error handling but not the values.
-- **Never deployed to Vercel.** The database, migrations and the whole app boot are verified
-  against real Neon, and the app runs locally, but the serverless entry point has not been built
-  by Vercel yet. See *One thing to check on the first deploy*.
 - **No Slack app exists yet**, so no command, modal, shortcut, event or button has run for real.
-- **Whether `Under Triage` → `To Do` exists as a transition is unknown.** The workflow is
-  restricted, not global (see below), and the backlog route depends on that transition. If it is
+  `/slack/events` correctly 404s until `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` are set.
+- **Whether `Under Triage` → `To Do` exists as a *transition***. The statuses all exist, but the
+  workflow is restricted rather than global, so reaching `To Do` from `Under Triage` still needs
+  checking with `npm run discover -- --issue=<key>` on an issue actually in triage. If it is
   missing, routing labels the issue `needs-manual-move` and says so instead of failing silently.
-- **Attachment upload to Jira is untested.** The multipart shape and the `X-Atlassian-Token`
-  header follow the API docs; the Slack download side is unit tested with a fake fetch.
-- The `reporter` field being settable is confirmed from the create screen, but
-  `MODIFY_REPORTER` on the service account is not — `discover` reports it.
+- **Attachment upload to Jira.** The multipart shape and the `X-Atlassian-Token` header follow
+  the API docs; the Slack download side is unit tested with a fake fetch.
+- `MODIFY_REPORTER` on the service account — `discover` reports it. Note the service account is
+  currently a personal one, so every issue will show that person as `Reporter`.
 
 ---
 
@@ -337,13 +366,31 @@ off on a 503 and stops trusting an endpoint that 500s), and the next cold start 
 `maxDuration` is 60s in `vercel.json`. Background work registered with `waitUntil` is still
 bounded by it.
 
-### One thing to check on the first deploy
+### Two things the first deploy taught us
 
-`api/index.ts` imports `../src/app.js` — the NodeNext convention of writing `.js` for a `.ts`
-file. Vercel's builder normally resolves this, but it has never been deployed from this repo. If
-the build complains about a missing module, the fix is to compile ahead of time (`npm run build`
-as the build command) and import from `dist/` instead. Everything else here has been exercised
-locally.
+Both are fixed, and both are the kind of thing that looks fine locally and fails only in a
+function:
+
+**A zod `.default()` only fires on `undefined`, not on an empty string.** Vercel's "import from
+.env.example" set all thirty variables to blank, which defeated every default at once and made
+fourteen of them invalid. `withoutBlanks` in `src/config.ts` now strips blanks before
+validation, because every way these get set produces empty strings freely.
+
+**The entry point must export a function, not an awaited value.** `api/index.ts` originally used
+a top-level await and exported the resolved express app; Vercel resolved the entry to a traced
+dependency instead and failed with "Invalid export found in module /var/task/src/app.js". It now
+exports an async handler and caches the bootstrap in a module-scope promise — same behaviour, in
+the shape Vercel expects.
+
+The NodeNext `.js`-for-`.ts` import convention turned out to be fine: Vercel resolved
+`../src/app.js` from `api/index.ts` without help.
+
+### Use sslmode=verify-full in the connection string
+
+`pg` warns on every cold start that `sslmode=require` is currently treated as `verify-full` and
+will adopt weaker libpq semantics in a future major version. Writing `sslmode=verify-full`
+explicitly keeps today's behaviour, silences the warning, and means a `pg` upgrade cannot
+quietly downgrade the connection.
 
 ### Backups
 
@@ -420,6 +467,11 @@ To check it end to end: move a bug out of `Under Triage` in Jira and watch the l
   project. A bad secret returns 404, not 403, so the path cannot be probed. On top of that, a
   loop guard drops any change made by the service account itself — without it BugBot would
   respond to its own writes.
+- **The webhook secret appears in Vercel's request logs**, because Vercel logs the full request
+  path and the secret is a path segment. Jira Cloud webhooks cannot send custom headers, so the
+  path is the only place a shared secret can go. In practice log access and deploy access are
+  the same people, so this is tolerable — but it is the reason `JIRA_WEBHOOK_IP_ALLOWLIST`
+  exists, and the reason to rotate the secret if log access ever widens.
 - **Secrets come from the environment only.** `.env` is gitignored; `.env.example` carries empty
   values. On Vercel they are project environment variables (`vercel env add`).
 - **Logs are redacted by default.** `src/logger.ts` censors tokens, `authorization` headers,
