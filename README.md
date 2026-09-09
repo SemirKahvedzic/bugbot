@@ -24,10 +24,9 @@ Full requirements live in `SPEC.md`. Section references below (`SPEC 7`) point t
 
 ## Status
 
-All phases are **built and tested** — 273 unit tests plus 13 integration tests against the real
-Neon database. Nothing has yet been exercised against the real Slack workspace or a real Jira
-token; that needs credentials only the QA owner can create, and it is the next step. See *What is
-not verified yet*.
+All phases are **built and tested** — 281 unit tests plus 13 integration tests against the real
+Neon database — and **deployed and verified on Vercel**. The Jira side works end to end. What is
+left is Slack: the app does not exist yet, so nothing Slack-facing has run for real.
 
 | Phase | Scope | State |
 |---|---|---|
@@ -53,6 +52,9 @@ locally:
 - **All three webhook guards, with logs to match**: a one-character-wrong secret gives 404
   ("bad secret - rejected"), a payload for another project gives 200 then
   "webhook for another project - rejected", and an unparseable body gives 400.
+- **Routing**: `/` returns the service description, `/healthz` and `/readyz` return 200,
+  unknown paths return 404 from the express app, and `/slack/events` returns 404 until Slack
+  credentials are set.
 
 ### Why the compile script is called `compile`, not `build`
 
@@ -78,26 +80,9 @@ The trade-off is that a type error no longer fails a deployment. `npm run typech
 `npm test` are the guard, and a CI workflow is the place to enforce them if that becomes worth
 doing.
 
-### Known issue: the bare `/` path
-
-`https://bugbot-eight.vercel.app/` returns `FUNCTION_INVOCATION_FAILED`. Every other path is
-fine: `/healthz` and `/readyz` return 200, `/api` and `/nope` return 404 from the express app,
-and the webhook routes behave exactly as above — so the function, the rewrite and the app are
-all working, and the failure is specific to the root.
-
-An explicit root rewrite rule and a real `GET /` route both made no difference, and the Vercel
-log for the request shows no error at all, which points at the routing layer rather than the
-function. **Nothing depends on it**: Slack posts to `/slack/events`, Jira to
-`/jira/webhook/:secret`, and monitoring uses `/healthz`.
-
-Worth checking in the Vercel dashboard, under Settings → Build and Deployment: Framework Preset
-should be **Other**, with Build Command and Output Directory empty. An auto-detected framework
-would install its own root handling, which would explain a failure specific to `/`.
-
 ### What is still not verified
 
-Everything below is covered by unit tests against recorded payloads, but has never spoken to the
-live services. Expect to work through these one at a time:
+Covered by unit tests, but never exercised against the live services:
 
 - **No Slack app exists yet**, so no command, modal, shortcut, event or button has run for real.
   `/slack/events` correctly 404s until `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` are set.
