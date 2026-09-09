@@ -87,7 +87,7 @@ describe('bugFeedBlocks: a bug filed through the form', () => {
     const text = json(blocks);
     expect(text).toContain('High');
     expect(text).toContain('Under Triage');
-    expect(text).toContain('/bug form');
+    expect(text).toContain('/bug');
     expect(text).toContain('<@U_REPORTER>');
   });
 
@@ -105,7 +105,7 @@ describe('bugFeedBlocks: a bug filed through the form', () => {
   it('shows severity, frequency and expected versus actual', () => {
     const text = json(blocks);
     expect(text).toContain('Major');
-    expect(text).toContain('always');
+    expect(text).toContain('Always');
     expect(text).toContain('Lights come on immediately');
     expect(text).toContain('Lights come on a second late');
   });
@@ -127,17 +127,38 @@ describe('bugFeedBlocks: a bug filed through the form', () => {
     expect(text).toContain('Report as bug');
   });
 
-  it('escapes a summary containing markup', () => {
+  it('does NOT escape the summary, because it sits in a plain_text header', () => {
+    // plain_text is not markup: Slack renders it literally, so escaping would
+    // show "&lt;script&gt;" to the reader. It is also why this is safe -
+    // plain_text interprets nothing, not mrkdwn and not mentions.
+    const blocks = bugFeedBlocks({
+      issueKey: 'SUP-14',
+      issueUrl: 'x',
+      summary: '<script> & "quotes"',
+      source: 'slack_modal',
+      report,
+    });
+
+    const header = blocks.find((block) => block.type === 'header') as
+      | { text: { type: string; text: string } }
+      | undefined;
+    expect(header?.text.type).toBe('plain_text');
+    expect(header?.text.text).toContain('<script> & "quotes"');
+    expect(header?.text.text).not.toContain('&lt;');
+  });
+
+  it('does escape untrusted text that lands in mrkdwn', () => {
+    // Everything outside the header is mrkdwn, where escaping is required.
     const text = json(
       bugFeedBlocks({
-        issueKey: 'SUP-14',
+        issueKey: 'SUP-15',
         issueUrl: 'x',
-        summary: '<script> & "quotes"',
+        summary: 'a',
         source: 'slack_modal',
-        report,
+        report: { ...report, expected: '<b>bold</b> & more' },
       }),
     );
-    expect(text).toContain('&lt;script&gt; &amp;');
+    expect(text).toContain('&lt;b&gt;bold&lt;/b&gt; &amp; more');
   });
 });
 
@@ -182,6 +203,92 @@ describe('bugFeedBlocks: a bug filed straight into Jira', () => {
   it('falls back to "unknown reporter" rather than leaving it blank', () => {
     expect(json(bugFeedBlocks({ issueKey: 'SUP-22', issueUrl: 'x', summary: 'a', source: 'jira_native' })))
       .toContain('unknown reporter');
+  });
+});
+
+describe('bugFeedBlocks: the card layout', () => {
+  const blocks = bugFeedBlocks({
+    issueKey: 'SUP-12',
+    issueUrl: 'https://roarington.atlassian.net/browse/SUP-12',
+    summary: report.summary,
+    source: 'slack_modal',
+    status: 'Under Triage',
+    priority: 'High',
+    reporterSlackId: 'U_REPORTER',
+    report,
+  });
+
+  it('opens with a divider and a header, so consecutive cards read apart', () => {
+    expect(blocks[0]!.type).toBe('divider');
+    expect(blocks[1]!.type).toBe('header');
+  });
+
+  it('puts the environment in a two-column field grid', () => {
+    const grid = blocks.find(
+      (block) => block.type === 'section' && 'fields' in block,
+    ) as { fields: Array<{ text: string }> } | undefined;
+
+    expect(grid).toBeDefined();
+    // Slack rejects a section with more than ten fields.
+    expect(grid!.fields.length).toBeLessThanOrEqual(10);
+    const labels = grid!.fields.map((f) => f.text.split('\n')[0]);
+    expect(labels).toEqual([
+      '*Application*',
+      '*Environment*',
+      '*Device*',
+      '*OS*',
+      '*Browser*',
+      '*Viewport*',
+      '*Input*',
+      '*Severity*',
+    ]);
+  });
+
+  it('carries an Open in Jira button', () => {
+    const withButton = blocks.find(
+      (block) => 'accessory' in block && Boolean((block as { accessory?: unknown }).accessory),
+    ) as { accessory: { url: string; action_id: string } } | undefined;
+
+    expect(withButton?.accessory.url).toBe('https://roarington.atlassian.net/browse/SUP-12');
+    // A URL button still fires an interaction, so it needs an id to ack.
+    expect(withButton?.accessory.action_id).toBe('open_issue');
+  });
+
+  it('never exceeds ten fields even for a Jira-native bug', () => {
+    const native = bugFeedBlocks({
+      issueKey: 'SUP-30',
+      issueUrl: 'x',
+      summary: 'a',
+      source: 'jira_native',
+      labels: ['src:jira', 'app:a', 'env:b', 'dev:c', 'sev:d', 'freq:e'],
+    });
+    for (const block of native) {
+      if (block.type === 'section' && 'fields' in block) {
+        expect((block as { fields: unknown[] }).fields.length).toBeLessThanOrEqual(10);
+      }
+    }
+  });
+
+  it('shows notes only when there are any', () => {
+    expect(json(blocks)).not.toContain('*Notes*');
+    const withNotes = json(
+      bugFeedBlocks({
+        issueKey: 'SUP-31',
+        issueUrl: 'x',
+        summary: 'a',
+        source: 'slack_modal',
+        report: { ...report, notes: 'Console: TypeError' },
+      }),
+    );
+    expect(withNotes).toContain('*Notes*');
+    expect(withNotes).toContain('Console: TypeError');
+  });
+
+  it('closes with who reported it and how', () => {
+    const last = blocks[blocks.length - 1]!;
+    expect(last.type).toBe('context');
+    expect(json(last)).toContain('<@U_REPORTER>');
+    expect(json(last)).toContain('/bug');
   });
 });
 

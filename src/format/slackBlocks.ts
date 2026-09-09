@@ -76,23 +76,54 @@ export interface BugFeedInput {
   report?: BugReport;
 }
 
+/** An arrow per priority, so urgency reads at a glance. */
+export function priorityEmoji(priority: string | undefined): string {
+  switch (priority?.toLowerCase()) {
+    case 'highest':
+      return ':arrow_double_up:';
+    case 'high':
+      return ':arrow_up:';
+    case 'low':
+      return ':arrow_down:';
+    case 'lowest':
+      return ':arrow_double_down:';
+    default:
+      return ':small_blue_diamond:';
+  }
+}
+
+/**
+ * A two-column key/value pair for a section's `fields`.
+ *
+ * Slack allows at most 10 per section, so callers must keep count. Note the
+ * value is mrkdwn, unlike a header, so it is escaped.
+ */
+function field(label: string, value: string): { type: 'mrkdwn'; text: string } {
+  return { type: 'mrkdwn', text: `*${label}*\n${escape(value)}` };
+}
+
 /**
  * The feed card: one message per new bug, whichever way it arrived.
  *
+ * Laid out as a card rather than a paragraph - a header for the summary, a
+ * two-column grid for the environment, a button out to Jira - because this
+ * lands in a channel people scan rather than read.
+ *
  * Both intake paths render through this so the feed is uniform. A bug filed in
- * Jira without the form simply has less to show - and the card says so
- * explicitly, because making that gap visible is the point of having a single
- * funnel at all.
+ * Jira without the form simply has less to show, and the card says so
+ * explicitly: making that gap visible is the point of having a single funnel
+ * at all.
  */
 export function bugFeedBlocks(input: BugFeedInput): AnyBlock[] {
   const parsed = parseLabels(input.labels);
+  const report = input.report;
 
   const how =
     input.source === 'jira_native'
       ? 'created directly in Jira'
       : input.source === 'slack_shortcut'
         ? 'via the "Report as bug" shortcut'
-        : 'via the /bug form';
+        : 'via the `/bug` form';
 
   const who = input.reporterSlackId
     ? `<@${input.reporterSlackId}>`
@@ -100,65 +131,83 @@ export function bugFeedBlocks(input: BugFeedInput): AnyBlock[] {
       ? escape(input.reporterName)
       : 'unknown reporter';
 
-  // `who` is either a mention or already escaped, so it is joined as-is;
-  // everything else coming from Jira is escaped here.
-  const contextParts = [
-    input.priority ? escape(input.priority) : undefined,
-    input.status ? escape(input.status) : undefined,
-    how,
-    `reported by ${who}`,
-  ].filter((part): part is string => Boolean(part));
-
   const blocks: AnyBlock[] = [
-    section(
-      `:beetle: *<${input.issueUrl}|${input.issueKey}>*  ${escape(truncate(input.summary, 150))}`,
-    ),
-    context(contextParts.join('  •  ')),
+    { type: 'divider' },
+    {
+      type: 'header',
+      // plain_text, so this must NOT be html-escaped - Slack would render the
+      // entities literally. Emoji shortcodes do render here.
+      text: { type: 'plain_text', text: `:beetle: ${truncate(input.summary, 145)}`, emoji: true },
+    },
+    {
+      type: 'section',
+      text: {
+        type: 'mrkdwn',
+        text: [
+          `*<${input.issueUrl}|${input.issueKey}>*`,
+          input.status ? `${statusEmoji(input.status)} ${escape(input.status)}` : undefined,
+          input.priority ? `${priorityEmoji(input.priority)} ${escape(input.priority)}` : undefined,
+        ]
+          .filter(Boolean)
+          .join('  •  '),
+      },
+      accessory: {
+        type: 'button',
+        action_id: ACTION.openIssue,
+        text: { type: 'plain_text', text: 'Open in Jira' },
+        url: input.issueUrl,
+      },
+    },
   ];
 
-  const report = input.report;
   if (report) {
-    const device = report.deviceModel
-      ? `${report.device} (${report.deviceModel})`
-      : report.device;
+    const device = report.deviceModel ? `${report.device} · ${report.deviceModel}` : report.device;
+
+    // Eight fields, comfortably inside Slack's limit of ten.
+    blocks.push({
+      type: 'section',
+      fields: [
+        field('Application', report.application),
+        field('Environment', report.environment),
+        field('Device', device),
+        field('OS', report.os),
+        field('Browser', report.browser),
+        field('Viewport', report.viewport),
+        field('Input', report.inputMethods.join(', ') || '-'),
+        field('Severity', `${report.severity} · ${report.frequency}`),
+      ],
+    });
 
     blocks.push(
       section(
-        `*Environment*  ${escape(
-          [
-            report.application,
-            report.environment,
-            device,
-            report.os,
-            report.browser,
-            report.viewport,
-            report.inputMethods.join('/'),
-          ]
-            .filter(Boolean)
-            .join(' · '),
-        )}`,
-      ),
-      section(
-        `*Severity*  ${escape(report.severity)}, happens ${escape(report.frequency.toLowerCase())}\n` +
-          `*Expected*  ${escape(truncate(report.expected, 300))}\n` +
-          `*Actual*  ${escape(truncate(report.actual, 300))}`,
+        `*Expected*\n${escape(truncate(report.expected, 500))}\n\n` +
+          `*Actual*\n${escape(truncate(report.actual, 500))}`,
       ),
     );
-    return blocks;
+
+    if (report.notes && report.notes.trim().length > 0) {
+      blocks.push(section(`*Notes*\n${escape(truncate(report.notes, 500))}`));
+    }
+  } else {
+    // No form behind it. Show whatever the labels carry, then say what is missing.
+    const labelled = [
+      parsed.app && field('Application', parsed.app),
+      parsed.env && field('Environment', parsed.env),
+      parsed.dev && field('Device', parsed.dev),
+      parsed.sev && field('Severity', [parsed.sev, parsed.freq].filter(Boolean).join(' · ')),
+    ].filter((entry): entry is ReturnType<typeof field> => Boolean(entry));
+
+    if (labelled.length > 0) blocks.push({ type: 'section', fields: labelled });
+
+    blocks.push(
+      section(
+        ':warning: *Filed without the QA form* — no device, viewport, steps or expected versus ' +
+          'actual. Ask the reporter for them, or point them at `/bug` next time.',
+      ),
+    );
   }
 
-  // No form behind it. Show whatever the labels carry, then say what is missing.
-  const fromLabels = [parsed.app, parsed.env, parsed.dev, parsed.sev, parsed.freq].filter(Boolean);
-  if (fromLabels.length > 0) {
-    blocks.push(section(`*Labelled*  ${escape(fromLabels.join(' · '))}`));
-  }
-
-  blocks.push(
-    section(
-      ':warning: Filed without the QA form, so there is no device, viewport, steps or expected ' +
-        'versus actual. Ask the reporter for them, or point them at `/bug` next time.',
-    ),
-  );
+  blocks.push(context(`reported by ${who}  •  ${how}`));
 
   return blocks;
 }
