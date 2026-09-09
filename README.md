@@ -24,14 +24,34 @@ Full requirements live in `SPEC.md`. Section references below (`SPEC 7`) point t
 
 ## Status
 
+All phases are **built and unit tested** (255 tests). Nothing has yet been exercised against the
+real Slack workspace or a real Jira token — that needs credentials only the QA owner can create,
+and it is the next step. See *What is not verified yet*.
+
 | Phase | Scope | State |
 |---|---|---|
-| 0 | Skeleton, config, Jira client, DB, Docker/Fly, `npm run discover` | **done** |
-| 1 | `/bug` modal → Jira issue in `Under Triage` + confirmation thread | not started |
-| 2 | Thread attachment sync, "Report as bug" message shortcut | not started |
-| 3 | Jira webhook, idempotency, routing matrix, `/triage` | not started |
-| 4 | `/mybugs`, App Home, status-change DMs | not started |
-| 5 | Weekly metrics digest | not started |
+| 0 | Skeleton, config, Jira client, DB, Docker/Fly, `npm run discover` | built |
+| 1 | `/bug` modal → Jira issue in `Under Triage` + confirmation thread | built |
+| 2 | Thread attachment sync, "Report as bug" message shortcut | built |
+| 3 | Jira webhook, idempotency, routing matrix, `/triage` | built |
+| 4 | `/mybugs`, App Home, status-change DMs | built |
+| 5 | `/bugstats` digest | built |
+
+### What is not verified yet
+
+Everything below is covered by unit tests against recorded payloads, but has never spoken to the
+live services. Expect to work through these one at a time:
+
+- **No real Jira token has been used.** `npm run discover` has only been run with a deliberately
+  invalid token, which proved the report's error handling but not the values.
+- **No Slack app exists yet**, so no command, modal, shortcut, event or button has run for real.
+- **Whether `Under Triage` → `To Do` exists as a transition is unknown.** The workflow is
+  restricted, not global (see below), and the backlog route depends on that transition. If it is
+  missing, routing labels the issue `needs-manual-move` and says so instead of failing silently.
+- **Attachment upload to Jira is untested.** The multipart shape and the `X-Atlassian-Token`
+  header follow the API docs; the Slack download side is unit tested with a fake fetch.
+- The `reporter` field being settable is confirmed from the create screen, but
+  `MODIFY_REPORTER` on the service account is not — `discover` reports it.
 
 ---
 
@@ -75,12 +95,28 @@ layout is not needed, and neither are `POST /rest/agile/1.0/sprint/{id}/issue` o
 `POST /rest/agile/1.0/backlog/issue`. `npm run discover` still reports boards and sprints,
 because knowing the board is Kanban is exactly what made this decision.
 
-**Caveat on `Finding`:** it sits at `hierarchyLevel: 1`, the same level as an epic. On a
-company-managed board, epic-level issues can render in the Epics panel rather than as cards in
-the columns. SUP is still empty, so whether `Finding` issues appear as ordinary cards on board
-468 is **unverified** — the first bug filed in Phase 1 settles it in one look. Using `Finding`
-was a deliberate choice to avoid needing a Jira admin; `JIRA_ISSUE_TYPE` is config, so switching
-to a standard-level type later is a one-line change plus a re-run of `npm run discover`.
+**`Finding` renders as an ordinary card.** It sits at `hierarchyLevel: 1`, the same level as an
+epic, which on some company-managed boards pushes issues into the Epics panel instead of the
+columns. Checked with a real issue (`SUP-1`): it appears as a normal card in the `To Do` column,
+with the full issue view — description, labels, priority, reporter, assignee, comments,
+attachments. So the epic-level concern does not bite here. `JIRA_ISSUE_TYPE` is still config, so
+switching types later remains a one-line change plus a re-run of `npm run discover`.
+
+**The workflow has restricted transitions, not global ones.** Confirmed on `SUP-1`: from `To Do`
+the only available transition is `id 2` → `Under Triage`, and `isGlobal: false`. That is unlike
+the `SOFT` project, where every transition is global and any status can reach any other.
+
+Two consequences:
+
+- Intake works exactly as SPEC 5 describes — create lands in `To Do`, then one transition moves
+  it to `Under Triage`.
+- **SPEC 7's backlog route needs an `Under Triage` → `To Do` transition to exist.** Whether it
+  does is not yet known: reading it requires an issue that is actually in `Under Triage`. Run
+  `npm run discover -- --issue=<key>` on such an issue to find out. BugBot resolves every
+  transition by target status name at call time and degrades loudly when one is unavailable
+  (it labels the issue and tells the triager rather than silently doing nothing), so this cannot
+  cause a wrong-status bug — but if the transition is missing, a Jira admin needs to add it
+  before Phase 3 backlog routing can move anything.
 
 **Column order is worth a second look.** The three terminal statuses (`Cannot Reproduce`,
 `Rejected`, `Duplicate`) currently sit *between* `In Progress` and `Ready for Validation`. For a
@@ -274,15 +310,44 @@ Nothing here needs `chat:write.public`, `groups:history`, `channels:read` or any
 
 ---
 
+## Jira webhook setup
+
+Without this, nothing is triaged automatically — intake works but the routing rules never fire.
+
+1. Generate a secret and put it in `.env`:
+
+   ```bash
+   openssl rand -hex 32     # -> JIRA_WEBHOOK_SECRET
+   ```
+
+   The route is not mounted at all until this is set, and the service says so at startup.
+
+2. In Jira: **Settings → System → WebHooks → Create a WebHook**.
+
+   - **URL**: `https://bugbot.fly.dev/jira/webhook/<the secret>`
+   - **JQL scope**: `project = SUP` — belt and braces; BugBot rejects other projects anyway.
+   - **Events**: *Issue created* and *Issue updated*. Nothing else.
+
+3. Optionally fill `JIRA_WEBHOOK_IP_ALLOWLIST` from <https://ip-ranges.atlassian.com/> (IPv4
+   CIDRs, comma-separated). Empty leaves the secret path as the only gate, which is a reasonable
+   first deploy.
+
+To check it end to end: move a bug out of `Under Triage` in Jira and watch the logs for a
+`routed` line. Moving it twice with no change in between should produce one `routed` and one
+`ignored_duplicate`.
+
 ## Security
 
 - **Slack request signatures** are verified by Bolt's `ExpressReceiver` on every request. This
   depends on the raw request body surviving to the receiver, so `express.json()` is never mounted
   globally ahead of it — only per-route. That failure mode is silent, which is why it is called
   out here and in a comment in `src/index.ts`.
-- **Jira webhooks are unsigned.** Phase 3 protects the endpoint with a long random secret in the
-  URL path (`JIRA_WEBHOOK_SECRET`), an IP allowlist of Atlassian's published ranges, and a
-  rejection of any payload whose `issue.key` is not in the configured project.
+- **Jira webhooks are unsigned.** The endpoint is protected by a long random secret in the URL
+  path (`JIRA_WEBHOOK_SECRET`, compared with `timingSafeEqual`), an optional IP allowlist of
+  Atlassian's published ranges, and rejection of any payload whose issue is not in the configured
+  project. A bad secret returns 404, not 403, so the path cannot be probed. On top of that, a
+  loop guard drops any change made by the service account itself — without it BugBot would
+  respond to its own writes.
 - **Secrets come from the environment only.** `.env` is gitignored; `.env.example` carries empty
   values. On Fly they are `fly secrets`.
 - **Logs are redacted by default.** `src/logger.ts` censors tokens, `authorization` headers,
@@ -292,28 +357,101 @@ Nothing here needs `chat:write.public`, `groups:history`, `channels:read` or any
 
 ---
 
+## What it does, end to end
+
+**Filing a bug.** `/bug` in `#soft-world` opens a form that requires application, environment,
+device and model, OS, browser, viewport, input method, numbered steps, expected vs actual,
+frequency and severity. The submission is acknowledged inside Slack's three-second window; the
+Jira work happens after. The issue is created, moved to `Under Triage`, given a normalised ADF
+description, labelled, and assigned a suggested priority from severity × frequency. A
+confirmation lands in the channel with the issue key and an invitation to post screenshots in the
+thread. If Jira fails, the reporter gets a DM saying so and the whole report is in the log.
+
+The message shortcut **"Report as bug"** does the same thing starting from an existing message:
+its first line prefills the summary, its text prefills the steps, a permalink to it goes on the
+issue, and the confirmation is posted in that message's thread.
+
+**Screenshots.** Any file posted in a bug's confirmation thread is downloaded with the bot token,
+attached to the issue, and the Slack message gets a ✅. Files over 10MB are refused out loud
+rather than dropped. Each file is claimed once, so a redelivered event cannot attach it twice.
+
+**Triage.** When a bug leaves `Under Triage`, the Jira webhook fires and BugBot reads the priority
+*at that moment*:
+
+| Priority | Jira | Slack |
+|---|---|---|
+| Lowest, Low, Medium | status `To Do`, label `triaged:backlog` | thread reply to the reporter |
+| High | status `To Do`, labels `triaged:sprint` + `needs-lead-review` | reporter reply, leader DM with Approve/Reassign, note in `#soft-world` |
+| Highest | status `To Do`, labels `triaged:sprint` + `escalated` | same, plus the reporter tagged in `#soft-world` |
+| → `Rejected` / `Duplicate` / `Cannot Reproduce` | nothing moved, nothing labelled | reporter DM with the resolution and the triager's last comment; `Cannot Reproduce` also asks for a recording |
+
+Every decision writes a `triage_events` row. Every message is claimed against the
+`notifications` table first, so replaying a webhook sends nothing twice.
+
+`/triage` gives QA the same rules as buttons: **Backlog**, **Sprint**, **Need info**,
+**Duplicate**. They set the priority and then call the identical `decideRoute`/`applyRoute` pair
+the webhook uses — the buttons cannot drift from the automatic path because there is only one
+implementation. They have to call it directly rather than waiting for the webhook their own
+change causes, because the loop guard correctly ignores anything the service account did.
+
+**Bugs filed in Jira, not Slack.** `jira:issue_created` funnels them the same way: recorded,
+labelled `src:jira`, moved into `Under Triage`, and the reporter's email resolved to a Slack user
+so they get the same notifications. If that lookup fails the bug still funnels; it just gets no
+DMs.
+
+**Reporter self-service.** `/mybugs` and the App Home tab show a reporter's own bugs grouped into
+Under Triage / In Progress / Ready for Validation / Closed. Both union the issue keys BugBot
+recorded with `reporter = <accountId>` in Jira, so bugs filed both ways appear in one list. Any
+other status change sends one short DM, rate-limited to one per issue per five minutes.
+
+**`/bugstats`** prints intake by application and severity, the backlog/sprint/closed split, the
+median time in triage and the top three reporters. `/bugstats post` shares it in `#soft-world`.
+
 ## Layout
 
 ```
 src/
-  index.ts              Express + Bolt bootstrap, health endpoints, Jira preflight
-  config.ts             zod-validated env; exits on invalid config
-  logger.ts             pino with the redaction list
+  index.ts                    Bootstrap: config, DB, HTTP, then Jira preflight and wiring
+  config.ts                   zod-validated env; exits on invalid config
+  context.ts                  the dependency bundle every handler receives
+  logger.ts                   pino with the redaction list
+  identity.ts                 Slack <-> Jira identity mapping, cached in user_map
+  types.ts                    BugReport, the option lists, the label builder
   jira/
-    client.ts           typed REST wrapper: Basic auth, retry, rate-limit backoff
-    meta.ts             resolves configured names to live Jira IDs
+    client.ts                 typed REST wrapper: Basic auth, retry, rate-limit backoff
+    meta.ts                   resolves configured names to live Jira IDs
+    issues.ts                 create, transition, label, attach, search
+    webhook.ts                secret path, IP allowlist, parse, dispatch
+  slack/
+    register.ts               every handler, mounted in one place
+    notify.ts                 every outbound Slack call, in one place
+    actions.ts                interaction ids
+    files.ts                  thread attachment sync
+    home.ts                   App Home
+    commands/bug.ts           /bug and the form submission
+    commands/mybugs.ts        /mybugs and the shared query
+    commands/triage.ts        /triage, its buttons, the leader buttons
+    commands/bugstats.ts      /bugstats
+    shortcuts/reportBug.ts    "Report as bug" message shortcut
+    views/bugModal.ts         the form: pure builder + parser
+  triage/
+    suggest.ts                severity x frequency -> priority (SPEC 6)
+    route.ts                  THE routing rules, pure
+    apply.ts                  the effects of a routing decision
+    leaders.ts                per-application team leader lookup
+  format/
+    adf.ts                    Atlassian Document Format builders
+    description.ts            the one description template, shared by both paths
+    slackBlocks.ts            Block Kit builders, pure
   db/
-    index.ts            open, migrate, ping
-    migrations/         schema, applied in order
+    index.ts, repo.ts, migrations/
 scripts/
-  discover.ts           dump every Jira ID (npm run discover)
-  manifest.json         Slack app manifest, ready to paste
+  discover.ts                 dump every Jira ID (npm run discover)
+  manifest.json               Slack app manifest, ready to paste
 config/
-  leaders.example.json  per-application team leader map (SPEC 9.2)
-test/                   vitest; HTTP mocked with msw
+  leaders.example.json        per-application team leader map (SPEC 9.2)
+test/                         vitest; HTTP mocked with msw, effects via a recording harness
 ```
-
-`src/slack/`, `src/triage/` and `src/format/` are created empty for Phases 1–3.
 
 ### Choices worth knowing about
 
@@ -344,9 +482,26 @@ npm test          # vitest run
 npm run typecheck
 ```
 
-51 tests covering: config validation and its error message, Slack-credential gating, log
-redaction, the Jira client's auth header, retry and backoff behaviour, `JiraError` never carrying
-the token, name-to-ID resolution and its error messages, migrations and their idempotency, and
-the schema constraints that make deduplication work.
+255 tests. The ones worth knowing about:
 
-The SPEC 6 priority matrix and the SPEC 7 routing table get table-driven tests in Phases 1 and 3.
+- **`suggest.test.ts`** transcribes the SPEC 6 matrix independently of the implementation and
+  checks all twelve cells, plus that the table is monotonic in both directions — a rarer or less
+  severe bug can never come out more urgent.
+- **`route.test.ts`** covers all five priority paths, all three terminal statuses, the
+  missing-priority fallback, and that renaming a status in config actually moves the rule.
+- **`webhook.test.ts`** is the Phase 3 acceptance criterion: each of the five priorities produces
+  exactly the SPEC 7 behaviour, and **replaying the same payload twice sends nothing twice**. It
+  also covers the three security guards, the loop guard, the no-transition fallback and
+  Jira-native intake.
+- **`triageButtons.test.ts`** proves the buttons produce the same Jira calls, Slack messages and
+  audit rows as the webhook path, and that a double click is one action.
+- **`repo.test.ts`** covers the idempotency ledger and the five-minute digest window directly.
+
+Two real bugs were found by these tests rather than in production:
+
+1. The viewport pattern rejected `800 X 600` — a capital X is something people type.
+2. Jira's changelog has a field literally named `toString`, which collides with
+   `Object.prototype.toString`. When an item arrived without it, a plain property read returned
+   the inherited *function*, zod rejected it as "expected string, received function", and the
+   entire webhook payload was dropped. `src/jira/webhook.ts` now rebuilds each changelog item on
+   a null prototype.

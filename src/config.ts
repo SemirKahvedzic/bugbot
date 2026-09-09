@@ -43,6 +43,12 @@ export const configSchema = z.object({
 
   JIRA_SET_REAL_REPORTER: bool.default('true'),
   JIRA_WEBHOOK_SECRET: z.string().min(16).optional(),
+  /**
+   * Atlassian's published outbound ranges (SPEC 11). Empty disables the check
+   * and leaves the secret path as the only gate - fine for a first deploy,
+   * worth filling in from https://ip-ranges.atlassian.com/ afterwards.
+   */
+  JIRA_WEBHOOK_IP_ALLOWLIST: csv.default(''),
 
   // --- Slack (optional until Phase 1) ---
   SLACK_BOT_TOKEN: z.string().startsWith('xoxb-').optional(),

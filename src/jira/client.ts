@@ -166,6 +166,49 @@ export class JiraClient {
   }
 
   /**
+   * Multipart upload, for attachments.
+   *
+   * `Content-Type` is deliberately not set - fetch has to generate it with the
+   * multipart boundary. `X-Atlassian-Token: no-check` is Jira's required opt
+   * out of its XSRF check on this endpoint; without it the call is rejected.
+   */
+  async postForm<T>(path: string, form: FormData): Promise<T> {
+    const url = this.url(path);
+    let lastError: JiraError | undefined;
+
+    for (let attempt = 1; attempt <= this.maxAttempts; attempt += 1) {
+      const response = await this.fetchImpl(url, {
+        method: 'POST',
+        headers: {
+          Authorization: this.authHeader,
+          Accept: 'application/json',
+          'X-Atlassian-Token': 'no-check',
+        },
+        body: form,
+      });
+
+      if (response.ok) {
+        const text = await response.text();
+        return (text.length > 0 ? JSON.parse(text) : undefined) as T;
+      }
+
+      const raw = await response.text().catch(() => '');
+      let parsed: unknown;
+      try {
+        parsed = raw.length > 0 ? JSON.parse(raw) : undefined;
+      } catch {
+        parsed = raw.slice(0, 500);
+      }
+      lastError = new JiraError(response.status, 'POST', path, extractMessages(parsed), parsed);
+
+      if (!isRetryable(response.status) || attempt === this.maxAttempts) throw lastError;
+      await this.sleep(this.delayFor(attempt, response.headers.get('retry-after')));
+    }
+
+    throw lastError ?? new JiraError(0, 'POST', path, ['upload failed with no response']);
+  }
+
+  /**
    * The tenant's cloud ID. Unauthenticated site endpoint, so it is the one
    * value we can verify before we know the credentials work (SPEC 2).
    */

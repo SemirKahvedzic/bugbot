@@ -71,8 +71,7 @@
       "request_url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
       "bot_events": [
         "app_home_opened",
-        "message.channels",
-        "file_shared"
+        "message.channels"
       ]
     },
     "interactivity": {
