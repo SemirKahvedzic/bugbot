@@ -3,70 +3,26 @@
  * refresh button. Better UX than the slash command, which is why both exist -
  * the command is what people reach for first.
  *
- * A triager gets two things more: every open bug on the board, and a
- * "Move to..." menu on each card that transitions the issue in Jira. That
- * makes the board workable from Slack without opening Jira, which is the
- * point. Everyone else sees exactly what they saw before.
+ * A triager gets one thing more: a "Move to..." menu on each card, which
+ * transitions the issue in Jira. That makes a bug workable from Slack without
+ * opening Jira, which is the point. Everyone else sees exactly what they saw
+ * before.
  */
 import type { App } from '@slack/bolt';
-import {
-  homeView,
-  issueUrl,
-  HOME_MAX_BOARD_CARDS,
-  type IssueSummaryLine,
-} from '../format/slackBlocks.js';
+import { homeView, issueUrl } from '../format/slackBlocks.js';
 import { keepAlive } from '../runtime.js';
 import { moveIssue } from '../triage/move.js';
 import { ACTION, parseMoveValue } from './actions.js';
-import { fetchMyBugs, jqlUrl, MY_BUGS_LIMIT, toSummaryLine } from './commands/mybugs.js';
+import { fetchMyBugs, MY_BUGS_LIMIT } from './commands/mybugs.js';
 import { mayTriage, refusalMessage, triagers } from './commands/triage.js';
 import { buildBugModal } from './views/bugModal.js';
 import type { BugbotContext } from '../context.js';
-
-interface BoardBugs {
-  issues: IssueSummaryLine[];
-  jqlUrl: string;
-}
-
-/**
- * Every open bug on the board, for a triager's App Home.
- *
- * `statusCategory != Done` rather than a list of status names: Done, Rejected,
- * Duplicate and Cannot Reproduce all sit in Jira's Done category, so this
- * means "still open" without naming a status that a workflow edit could
- * rename underneath it.
- *
- * Returns undefined when Jira cannot be read, so the section is left out
- * altogether - an empty list would render as "nothing open on the board",
- * which would be a lie.
- */
-async function fetchBoardBugs(context: BugbotContext): Promise<BoardBugs | undefined> {
-  const { config, issues, log } = context;
-  const jql =
-    `project = ${config.JIRA_PROJECT_KEY} AND statusCategory != Done ORDER BY created ASC`;
-
-  try {
-    const found = await issues.search(jql, { maxResults: HOME_MAX_BOARD_CARDS });
-    return { issues: found.map(toSummaryLine), jqlUrl: jqlUrl(config.JIRA_BASE_URL, jql) };
-  } catch (error) {
-    log.error(
-      { err: error instanceof Error ? error.message : String(error) },
-      'could not read the board for App Home',
-    );
-    return undefined;
-  }
-}
 
 export async function publishHomeFor(
   context: BugbotContext,
   slackUserId: string,
 ): Promise<boolean> {
-  const isTriager = mayTriage(context, slackUserId);
-
-  const [mine, board] = await Promise.all([
-    fetchMyBugs(context, slackUserId),
-    isTriager ? fetchBoardBugs(context) : undefined,
-  ]);
+  const mine = await fetchMyBugs(context, slackUserId);
 
   return context.notifier.publishHome(
     slackUserId,
@@ -75,11 +31,13 @@ export async function publishHomeFor(
       issues: mine.issues,
       jqlUrl: mine.jqlUrl,
       limit: MY_BUGS_LIMIT,
-      ...(board ? { boardIssues: board.issues, boardJqlUrl: board.jqlUrl } : {}),
-      // The menu comes from the live workflow, so it offers exactly the columns
-      // the board has and cannot drift out of date. Given even when the board
-      // read failed, so a triager's own cards stay movable.
-      ...(isTriager ? { moveTargets: context.meta.statusNames() } : {}),
+      // In the board's own column order, read from the board configuration at
+      // boot - so the menu reads left to right the way the board does. Only
+      // for a triager: a control that changes Jira state for the whole team
+      // does not belong on a reporter's card.
+      ...(mayTriage(context, slackUserId)
+        ? { moveTargets: context.meta.statusNamesInBoardOrder() }
+        : {}),
     }),
   );
 }

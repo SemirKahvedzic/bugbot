@@ -11,6 +11,7 @@
  * works even on an empty project where no transition has ever been observed.
  */
 import type {
+  JiraBoardConfiguration,
   JiraClient,
   JiraIssueTypeStatuses,
   JiraPriority,
@@ -28,6 +29,8 @@ export class JiraMetaError extends Error {
 export interface JiraMetaOptions {
   projectKey: string;
   issueTypeName: string;
+  /** Read for its column order. Omitted, the workflow order is used instead. */
+  boardId?: number;
 }
 
 const normalise = (value: string) => value.trim().toLowerCase();
@@ -36,6 +39,11 @@ export interface JiraMetaSnapshot {
   project: JiraProject;
   issueTypes: JiraIssueTypeStatuses[];
   priorities: JiraPriority[];
+  /**
+   * Status ids in the order the board lays its columns out, flattened across
+   * columns. Absent when the board could not be read.
+   */
+  boardStatusIds?: string[];
 }
 
 export class JiraMeta {
@@ -56,8 +64,40 @@ export class JiraMeta {
       ),
       this.client.get<JiraPriority[]>('/rest/api/3/priority'),
     ]);
-    this.snapshot = { project, issueTypes, priorities };
+    const boardStatusIds = await this.loadBoardStatusIds();
+
+    this.snapshot = {
+      project,
+      issueTypes,
+      priorities,
+      ...(boardStatusIds ? { boardStatusIds } : {}),
+    };
     return this.snapshot;
+  }
+
+  /**
+   * The board's column order, or undefined.
+   *
+   * Deliberately not fatal. Reading a board needs the Agile API and a board
+   * the service account can see, and neither is required for any other part
+   * of the service - so a failure here costs a nicely ordered menu, and must
+   * not cost a boot.
+   */
+  private async loadBoardStatusIds(): Promise<string[] | undefined> {
+    const { boardId } = this.options;
+    if (boardId === undefined) return undefined;
+
+    try {
+      const board = await this.client.get<JiraBoardConfiguration>(
+        `/rest/agile/1.0/board/${boardId}/configuration`,
+      );
+      const ids = (board.columnConfig?.columns ?? []).flatMap((column) =>
+        (column.statuses ?? []).map((status) => status.id),
+      );
+      return ids.length > 0 ? ids : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private requireSnapshot(): JiraMetaSnapshot {
@@ -102,6 +142,33 @@ export class JiraMeta {
   /** Status names reachable by the configured issue type, in Jira's order. */
   statusNames(): string[] {
     return this.issueType().statuses.map((status) => status.name);
+  }
+
+  /**
+   * Status names in the order the board shows its columns.
+   *
+   * Not the same as workflow order, and the difference is visible on SUP: the
+   * board puts Cannot Reproduce, Rejected and Duplicate between In Progress
+   * and Ready for Validation, and nothing in the workflow says so. Only the
+   * board configuration does.
+   *
+   * A status the board does not show is appended rather than dropped, so a
+   * column missing from the board never makes a status unreachable.
+   */
+  statusNamesInBoardOrder(): string[] {
+    const ids = this.requireSnapshot().boardStatusIds;
+    const statuses = this.issueType().statuses;
+    if (!ids) return this.statusNames();
+
+    const nameById = new Map(statuses.map((status) => [status.id, status.name]));
+    const onBoard = ids
+      .map((id) => nameById.get(id))
+      .filter((name): name is string => name !== undefined);
+
+    const seen = new Set(onBoard);
+    const offBoard = statuses.map((status) => status.name).filter((name) => !seen.has(name));
+
+    return [...onBoard, ...offBoard];
   }
 
   statusId(name: string): string {

@@ -450,13 +450,6 @@ export function myBugsBlocks(input: {
  * total under the cap however high the caller's limit is set.
  */
 export const HOME_MAX_CARDS = 25;
-/**
- * Own-report cards shown when the board section is there too. A triager cares
- * about the board more than their own list, so their own section gives up the
- * room rather than the board losing it.
- */
-export const HOME_MAX_CARDS_WITH_BOARD = 8;
-export const HOME_MAX_BOARD_CARDS = 15;
 export const HOME_BLOCK_LIMIT = 100;
 
 /**
@@ -516,19 +509,12 @@ export function homeView(input: {
   jqlUrl: string;
   limit: number;
   /**
-   * Every open bug on the board. Given only for a triager, because for anyone
-   * else it is a list of bugs they cannot act on and did not ask about.
-   */
-  boardIssues?: IssueSummaryLine[];
-  boardJqlUrl?: string;
-  /**
    * Statuses the "Move to..." menu offers. Given only for a triager: a control
    * that changes Jira state for the whole team does not belong on a reporter's
    * card.
    */
   moveTargets?: string[];
 }): HomeView {
-  const hasBoard = input.boardIssues !== undefined;
   const cards: BugCardOptions = input.moveTargets?.length
     ? { moveTargets: input.moveTargets }
     : {};
@@ -554,7 +540,7 @@ export function homeView(input: {
     ...cardSection({
       baseUrl: input.baseUrl,
       issues: input.issues,
-      limit: Math.min(input.limit, hasBoard ? HOME_MAX_CARDS_WITH_BOARD : HOME_MAX_CARDS),
+      limit: Math.min(input.limit, HOME_MAX_CARDS),
       jqlUrl: input.jqlUrl,
       empty:
         'You have not reported any bugs yet. Hit *Report a bug*, or run `/bug` in a channel, ' +
@@ -562,21 +548,6 @@ export function homeView(input: {
       cards,
     }),
   ];
-
-  if (input.boardIssues) {
-    blocks.push(
-      { type: 'divider' },
-      { type: 'header', text: { type: 'plain_text', text: 'Open bugs on the board' } },
-      ...cardSection({
-        baseUrl: input.baseUrl,
-        issues: input.boardIssues,
-        limit: HOME_MAX_BOARD_CARDS,
-        jqlUrl: input.boardJqlUrl ?? input.jqlUrl,
-        empty: ':tada: Nothing open on the board.',
-        cards,
-      }),
-    );
-  }
 
   return { type: 'home', blocks: trimBlocks(blocks) };
 }

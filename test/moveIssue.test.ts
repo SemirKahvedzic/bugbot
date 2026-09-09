@@ -217,29 +217,18 @@ describe('homeView', () => {
     limit: 20,
   };
 
-  it('shows only your own reports, read-only, for a reporter', () => {
+  it('is read-only for a reporter', () => {
     const text = json(homeView(base));
     expect(text).toContain('Your bug reports');
-    expect(text).not.toContain('Open bugs on the board');
     expect(text).not.toContain('move_issue');
   });
 
-  it('adds the board and the move menus for a triager', () => {
-    const text = json(
-      homeView({
-        ...base,
-        boardIssues: [{ ...card, key: 'SUP-99', summary: 'Filed in Jira by a developer' }],
-        boardJqlUrl: 'https://jira.example/issues/?jql=board',
-        moveTargets: ['Under Triage', 'In Progress'],
-      }),
-    );
-
-    expect(text).toContain('Open bugs on the board');
-    expect(text).toContain('SUP-99');
-    expect(text).toContain('SUP-99::In Progress');
+  it('puts a move menu on every card for a triager', () => {
+    const text = json(homeView({ ...base, moveTargets: ['Under Triage', 'In Progress'] }));
+    expect(text).toContain('SUP-1::In Progress');
   });
 
-  it('stays inside Slack block limit with both sections full', () => {
+  it('keeps a full list inside the Slack block limit', () => {
     const many = Array.from({ length: 40 }, (_, index) => ({
       ...card,
       key: `SUP-${index + 1}`,
@@ -250,7 +239,6 @@ describe('homeView', () => {
       ...base,
       issues: many,
       limit: 25,
-      boardIssues: many,
       moveTargets: ['To Do', 'Under Triage', 'In Progress', 'Done'],
     });
 
@@ -269,19 +257,35 @@ describe('trimBlocks', () => {
 });
 
 describe('publishHomeFor', () => {
-  it('gives a triager the board section and movable cards', async () => {
+  it('gives a triager movable cards, in the board column order', async () => {
+    // Home lists the bugs you reported, and the QA owner reported none in the
+    // fixture - a Jira account is what puts SUP-1 in their list.
+    harness.identityResult.jiraAccountId = 'acc-qa';
+
     await publishHomeFor(harness.context, 'U_QA');
 
     const text = json(harness.homeViews[0]!);
-    expect(text).toContain('Open bugs on the board');
     expect(text).toContain('move_issue');
+
+    // The menu has to read left to right the way the board does, which is not
+    // the workflow order: Cannot Reproduce, Rejected and Duplicate come before
+    // Ready for Validation on board 468.
+    const offered = [...text.matchAll(/SUP-1::([^"]+)/g)].map((match) => match[1]);
+    expect(offered).toEqual([
+      'To Do',
+      'In Progress',
+      'Cannot Reproduce',
+      'Rejected',
+      'Duplicate',
+      'Ready for Validation',
+      'Done',
+    ]);
   });
 
   it('gives everyone else the view they always had', async () => {
     await publishHomeFor(harness.context, 'U_REPORTER');
 
     const text = json(harness.homeViews[0]!);
-    expect(text).not.toContain('Open bugs on the board');
     expect(text).not.toContain('move_issue');
   });
 });

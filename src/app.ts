@@ -98,6 +98,7 @@ async function resolveJiraMeta(config: Config, jira: JiraClient): Promise<JiraMe
   const meta = new JiraMeta(jira, {
     projectKey: config.JIRA_PROJECT_KEY,
     issueTypeName: config.JIRA_ISSUE_TYPE,
+    boardId: config.JIRA_BOARD_ID,
   });
 
   // Fewer, shorter retries on serverless: the caller is a request with its own

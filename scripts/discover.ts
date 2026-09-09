@@ -317,6 +317,30 @@ async function main(): Promise<void> {
 
   // 9. Active sprint ------------------------------------------------------
   const boardId = env.JIRA_BOARD_ID ?? boards?.[0]?.id;
+
+  if (boardId) {
+    // The order App Home's "Move to..." menu uses. Worth printing because it
+    // is not the workflow order and nothing else reveals it.
+    await section('boardColumns', `Column order on board ${boardId}`, async () => {
+      const config = await jira.get<{
+        columnConfig?: { columns?: Array<{ name: string; statuses?: Array<{ id: string }> }> };
+      }>(`/rest/agile/1.0/board/${boardId}/configuration`);
+
+      const columns = config.columnConfig?.columns ?? [];
+      for (const [index, column] of columns.entries()) {
+        const ids = (column.statuses ?? []).map((status) => status.id).join(', ') || '(none)';
+        out(`  ${String(index + 1).padEnd(3)}${column.name.padEnd(24)} status ids ${ids}`);
+      }
+      if (columns.length === 0) {
+        findings.push(
+          `Board ${boardId} reports no columns, so the App Home move menu falls back to ` +
+            'workflow order. Harmless, but the menu will not match the board.',
+        );
+      }
+      return columns;
+    });
+  }
+
   if (boardId) {
     const board = boards?.find((b) => b.id === boardId);
     await section('activeSprint', `Active sprint on board ${boardId}`, async () => {

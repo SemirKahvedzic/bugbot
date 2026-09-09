@@ -48,10 +48,35 @@ const PRIORITIES = [
   { id: '5', name: 'Lowest' },
 ];
 
+/**
+ * Board 468's columns, in the order the board shows them. Note that this is
+ * *not* the workflow order above: the board puts the three closed-without-work
+ * statuses between In Progress and Ready for Validation.
+ */
+const SUP_BOARD_CONFIG = {
+  id: 468,
+  name: 'SUP board',
+  columnConfig: {
+    columns: [
+      { name: 'To Do', statuses: [{ id: '10000' }] },
+      { name: 'Under Triage', statuses: [{ id: '10500' }] },
+      { name: 'In Progress', statuses: [{ id: '3' }] },
+      { name: 'Cannot Reproduce', statuses: [{ id: '10504' }] },
+      { name: 'Rejected', statuses: [{ id: '10502' }] },
+      { name: 'Duplicate', statuses: [{ id: '10503' }] },
+      { name: 'Ready for Validation', statuses: [{ id: '10501' }] },
+      { name: 'Done', statuses: [{ id: '10001' }] },
+    ],
+  },
+};
+
 const server = setupServer(
   http.get(`${BASE}/rest/api/3/project/SUP`, () => HttpResponse.json(SUP_PROJECT)),
   http.get(`${BASE}/rest/api/3/project/SUP/statuses`, () => HttpResponse.json(SUP_STATUSES)),
   http.get(`${BASE}/rest/api/3/priority`, () => HttpResponse.json(PRIORITIES)),
+  http.get(`${BASE}/rest/agile/1.0/board/468/configuration`, () =>
+    HttpResponse.json(SUP_BOARD_CONFIG),
+  ),
 );
 
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
@@ -66,6 +91,78 @@ function makeMeta(issueTypeName = 'Finding'): JiraMeta {
   });
   return new JiraMeta(client, { projectKey: 'SUP', issueTypeName });
 }
+
+function makeBoardMeta(): JiraMeta {
+  const client = new JiraClient({
+    baseUrl: BASE,
+    email: 'bugbot@roarington.com',
+    apiToken: 'token',
+  });
+  return new JiraMeta(client, { projectKey: 'SUP', issueTypeName: 'Finding', boardId: 468 });
+}
+
+describe('board column order', () => {
+  it('orders statuses the way the board lays out its columns', async () => {
+    const meta = makeBoardMeta();
+    await meta.load();
+
+    // The point of reading the board at all: this order is not derivable from
+    // the workflow, which puts Ready for Validation and Done before the three
+    // closed-without-work statuses.
+    expect(meta.statusNamesInBoardOrder()).toEqual([
+      'To Do',
+      'Under Triage',
+      'In Progress',
+      'Cannot Reproduce',
+      'Rejected',
+      'Duplicate',
+      'Ready for Validation',
+      'Done',
+    ]);
+  });
+
+  it('falls back to workflow order with no board configured', async () => {
+    const meta = makeMeta();
+    await meta.load();
+    expect(meta.statusNamesInBoardOrder()).toEqual(meta.statusNames());
+  });
+
+  it('falls back to workflow order when the board cannot be read', async () => {
+    // Reading a board needs the Agile API and a board the service account can
+    // see. Neither is needed anywhere else, so losing it costs a tidy menu and
+    // must not cost a boot.
+    server.use(
+      http.get(`${BASE}/rest/agile/1.0/board/468/configuration`, () =>
+        HttpResponse.json({ errorMessages: ['no permission'] }, { status: 403 }),
+      ),
+    );
+
+    const meta = makeBoardMeta();
+    await meta.load();
+    expect(meta.statusNamesInBoardOrder()).toEqual(meta.statusNames());
+  });
+
+  it('appends a status the board does not show rather than dropping it', async () => {
+    server.use(
+      http.get(`${BASE}/rest/agile/1.0/board/468/configuration`, () =>
+        HttpResponse.json({
+          id: 468,
+          name: 'SUP board',
+          columnConfig: { columns: [{ name: 'To Do', statuses: [{ id: '10000' }] }] },
+        }),
+      ),
+    );
+
+    const meta = makeBoardMeta();
+    await meta.load();
+    const order = meta.statusNamesInBoardOrder();
+
+    // A column missing from the board must never make a status unreachable.
+    expect(order[0]).toBe('To Do');
+    expect(order).toHaveLength(meta.statusNames().length);
+    expect(order).toContain('Done');
+  });
+});
 
 describe('JiraMeta name resolution', () => {
   it('refuses to resolve before load()', () => {

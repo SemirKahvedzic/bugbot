@@ -709,26 +709,35 @@ Under Triage / In Progress / Ready for Validation / Closed. Both union the issue
 recorded with `reporter = <accountId>` in Jira, so bugs filed both ways appear in one list. Any
 other status change sends one short DM, rate-limited to one per issue per five minutes.
 
-**Working the board from App Home.** A triager's Home has a second section, *Open bugs on the
-board* — every SUP issue whose status category is not Done, so bugs filed straight into Jira by a
-developer are there too — and every card carries a **Move to…** menu that transitions the issue.
-That is what makes the board workable from Slack without opening Jira.
+**Moving a bug from App Home.** For a triager, every card on Home carries a **Move to…** menu that
+transitions the issue in Jira. That is what makes a bug workable from Slack without opening Jira.
 
-The menu is built from `meta.statusNames()`, the live `Finding` workflow read at boot, so it
-offers exactly the columns the board has and cannot drift. It does *not* pre-check which moves the
-workflow allows: that would be a Jira call per card on every Home render. The transition is
-resolved on the click instead, and a refusal DMs you what *is* reachable from where the issue sits
-— which matters, because SUP's workflow is restricted and "no transition from here to there" is
-routine rather than exotic.
+The menu is ordered by the board's own columns, read from
+`/rest/agile/1.0/board/{id}/configuration` at boot, so it reads left to right the way the board
+does. This is not the same as workflow order, and on SUP the difference is plain: the board puts
+*Cannot Reproduce*, *Rejected* and *Duplicate* between *In Progress* and *Ready for Validation*,
+and nothing in the workflow says so. Only the board configuration does. Reading it is deliberately
+not fatal — it needs the Agile API and a visible board, neither of which anything else in the
+service uses — so a failure costs a tidy menu order and falls back to workflow order. A status the
+board does not show is appended rather than dropped, so a missing column never makes a status
+unreachable. `npm run discover` prints the column order under **boardColumns**.
+
+The menu does *not* pre-check which moves the workflow allows: that would be a Jira call per card
+on every Home render. The transition is resolved on the click instead, and a refusal DMs you what
+*is* reachable from where the issue sits — which matters, because SUP's workflow is restricted and
+"no transition from here to there" is routine rather than exotic.
+
+There is no separate "board" section on Home. One was built and removed: Home lists the bugs you
+reported, and QA reports most of them, so the two sections showed the same cards twice.
 
 A successful move says nothing: republishing Home shows the card in its new column, which is the
 feedback. A block action inside App Home carries no `response_url`, so everything else — a
 refusal, an error, a stale view — arrives as a DM.
 
-Both the section and the menus are for triagers only, the same list `/triage` uses. A reporter
-should not be able to send their own bug to *Done*, and a control that changes Jira state for the
-whole team does not belong on their card. The handler re-checks on the click as well, since a Home
-view can outlive somebody's removal from the list.
+The menus are for triagers only, the same list `/triage` uses. A reporter should not be able to
+send their own bug to *Done*, and a control that changes Jira state for the whole team does not
+belong on their card. The handler re-checks on the click as well, since a Home view can outlive
+somebody's removal from the list.
 
 Every move writes a `triage_events` row with `routed_to = 'manual'`, kept apart from the routing
 destinations so `/bugstats` can tell a decision somebody made from one a rule made, and the
@@ -766,7 +775,7 @@ src/
     notify.ts                 every outbound Slack call, in one place
     actions.ts                interaction ids
     files.ts                  thread attachment sync
-    home.ts                   App Home: own reports, the board for triagers, Move to...
+    home.ts                   App Home: own reports, plus Move to... for triagers
     commands/bug.ts           /bug and the form submission
     commands/mybugs.ts        /mybugs and the shared query
     commands/triage.ts        /triage, its buttons, the leader buttons

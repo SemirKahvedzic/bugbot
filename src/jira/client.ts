@@ -247,6 +247,19 @@ export interface JiraIssueTypeStatuses {
   statuses: JiraStatusRef[];
 }
 
+/**
+ * Board configuration. Only the column order is read: a column holds status
+ * *ids*, and the column's own name is a board label that need not match any
+ * status, so the ids are what gets mapped back to names.
+ */
+export interface JiraBoardConfiguration {
+  id: number;
+  name: string;
+  columnConfig?: {
+    columns?: Array<{ name: string; statuses?: Array<{ id: string }> }>;
+  };
+}
+
 export interface JiraPriority {
   id: string;
   name: string;

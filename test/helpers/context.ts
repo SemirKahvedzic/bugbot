@@ -32,7 +32,7 @@ export const BASE_ENV = {
 
 export const SERVICE_ACCOUNT_ID = 'acc-service';
 
-/** The SUP Finding workflow, as verified against the live site. */
+/** The SUP Finding workflow, in workflow order, as verified against the live site. */
 export const FAKE_STATUSES = [
   'To Do',
   'Under Triage',
@@ -42,6 +42,18 @@ export const FAKE_STATUSES = [
   'Rejected',
   'Duplicate',
   'Cannot Reproduce',
+];
+
+/** The same statuses in board 468's column order, which is a different order. */
+export const FAKE_BOARD_ORDER = [
+  'To Do',
+  'Under Triage',
+  'In Progress',
+  'Cannot Reproduce',
+  'Rejected',
+  'Duplicate',
+  'Ready for Validation',
+  'Done',
 ];
 
 export interface PostedMessage {
@@ -241,6 +253,7 @@ export async function makeTestContext(
     // live site at boot; here they are the workflow SUP actually has.
     meta: {
       statusNames: () => [...FAKE_STATUSES],
+      statusNamesInBoardOrder: () => [...FAKE_BOARD_ORDER],
       hasStatus: (name: string) =>
         FAKE_STATUSES.some((status) => status.toLowerCase() === name.toLowerCase()),
     },
