@@ -68,6 +68,12 @@ export interface BugReport {
   slackChannelId?: string;
   /** Permalink to the message a "Report as bug" shortcut was used on. */
   slackMessagePermalink?: string;
+  /**
+   * Permalink to the bug's confirmation thread - where screenshots go and
+   * where a reply reaches the reporter. Only known after the confirmation has
+   * been posted, so the description is updated with it afterwards.
+   */
+  slackThreadPermalink?: string;
 }
 
 /**

@@ -52,6 +52,8 @@ export interface TestHarness {
   issuesByKey: Map<string, Issue>;
   /** Status names the fake workflow can transition to. Empty means "any". */
   allowedTransitions: Set<string>;
+  /** Mutate to change what Identity.forSlackUser reports. */
+  identityResult: { displayName?: string; email?: string; jiraAccountId?: string };
   reset(): void;
 }
 
@@ -97,7 +99,41 @@ export function makeTestContext(overrides: Partial<Record<string, string>> = {})
     },
   };
 
+  // Mutable so a test can say "this reporter has no Jira account".
+  const identityResult: {
+    displayName?: string;
+    email?: string;
+    jiraAccountId?: string;
+  } = {};
+
+  let nextIssueKey = 100;
+
   const issues = {
+    async createBug(
+      report: { summary: string },
+      triageStatusName: string,
+      options: { reporterAccountId?: string; priority?: Priority } = {},
+    ) {
+      const key = `SUP-${nextIssueKey++}`;
+      jiraCalls.push({
+        op: 'createBug',
+        issueKey: key,
+        detail: {
+          summary: report.summary,
+          triageStatusName,
+          reporterAccountId: options.reporterAccountId ?? null,
+        },
+      });
+      const allowed = allowedTransitions.size === 0 || allowedTransitions.has(triageStatusName);
+      return {
+        issue: { id: '1', key, self: `https://example/${key}` },
+        priority: (options.priority ?? 'Medium') as Priority,
+        transitioned: allowed,
+      };
+    },
+    async setDescription(issueKey: string, adf: unknown) {
+      jiraCalls.push({ op: 'setDescription', issueKey, detail: JSON.stringify(adf) });
+    },
     async getIssue(issueKey: string): Promise<Issue> {
       const issue = issuesByKey.get(issueKey);
       if (!issue) throw new Error(`test fixture has no issue ${issueKey}`);
@@ -142,7 +178,7 @@ export function makeTestContext(overrides: Partial<Record<string, string>> = {})
 
   const identity = {
     async forSlackUser(slackUserId: string) {
-      return { slackUserId, displayName: `User ${slackUserId}` };
+      return { slackUserId, displayName: `User ${slackUserId}`, ...identityResult };
     },
     async slackUserForJiraAccount(_accountId: string, email?: string) {
       // Only the fixture address maps to a Slack user.
@@ -192,6 +228,7 @@ export function makeTestContext(overrides: Partial<Record<string, string>> = {})
     jiraCalls,
     issuesByKey,
     allowedTransitions,
+    identityResult,
     reset() {
       posts.length = 0;
       jiraCalls.length = 0;

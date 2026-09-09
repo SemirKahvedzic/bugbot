@@ -106,7 +106,7 @@ describe('renderDescription', () => {
       slackMessagePermalink: 'https://roarington.slack.com/archives/C1/p1',
     });
     const text = allText(adf).join(' ');
-    expect(text).toContain('original Slack message');
+    expect(text).toContain('the message this was reported from');
     expect(JSON.stringify(adf)).toContain('https://roarington.slack.com/archives/C1/p1');
     expect(text).toMatch(/shortcut/);
   });

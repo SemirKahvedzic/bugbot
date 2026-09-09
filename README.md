@@ -157,10 +157,37 @@ needs: `BROWSE_PROJECTS`, `CREATE_ISSUES`, `EDIT_ISSUES`, `TRANSITION_ISSUES`,
 ### Reporters and identity
 
 `JIRA_SET_REAL_REPORTER=true` makes BugBot set the actual human as the Jira `reporter`, resolved
-by looking their Slack email up against Jira. When the lookup fails, the issue is still filed —
-it falls back to the service account and records the human in the description footer and in the
-local database, so nothing is lost except the native `reporter` field. Set it to `false` to
-always file as the service account.
+by looking their Slack email up against Jira. Set it to `false` to always file as the service
+account.
+
+### What if the reporter has no Jira account?
+
+This is the common case — most people who hit a bug are not Jira users — so it is worth being
+precise about it.
+
+Jira's **`Reporter` field will show the service account (BugBot)**. BugBot only sets a real
+reporter when it found a matching Jira `accountId`; with no account it omits the field entirely
+and Jira defaults it to whoever authenticated. The same fallback happens if the service account
+lacks `MODIFY_REPORTER`: the create call is retried without the field rather than failing.
+
+The actual human is recorded in four places instead:
+
+1. **The description footer** — `Reported by: Margherita Turrin <margherita@roarington.com> - via
+   the Slack /bug form`. Name and email come from their Slack profile; the email is included
+   because a name alone is ambiguous and is what lets a reader actually find them.
+2. **A link to the Slack thread**, added to the description right after the confirmation is
+   posted: *"Slack thread (reply here to reach the reporter)"*. Replying there reaches them, and
+   any file posted there is attached to the issue automatically. This is the part that makes a
+   reporter with no Jira account workable — a developer triaging in Jira has somewhere to click.
+3. **`issue_reports.slack_user_id`** in the local database.
+4. **The confirmation message in Slack**, which says `Filed by @them`.
+
+**Notifications are unaffected.** Thread replies and DMs key off the Slack user id, not the Jira
+account, so someone with no Jira account still gets "triaged, in the backlog", the rejection
+reason, and status changes. The only thing they lose is their name in Jira's `Reporter` column.
+
+If the Slack profile has no real name, the footer degrades to the email, then to
+`Slack user U08HVG0H2EL` — ugly but traceable, never blank.
 
 This works without per-user Jira OAuth (3LO), which v1 deliberately avoids. Adding 3LO later
 would buy a genuinely per-user `reporter` field and per-user permission checks, at the cost of an

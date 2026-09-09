@@ -7,6 +7,7 @@
  * log - a bug report must never vanish silently.
  */
 import type { App } from '@slack/bolt';
+import { renderDescription } from '../../format/description.js';
 import { intakeConfirmationBlocks, issueUrl } from '../../format/slackBlocks.js';
 import { allowedChannelMentions, channelAllowed, type BugbotContext } from '../../context.js';
 import { COMMAND } from '../actions.js';
@@ -126,10 +127,48 @@ export async function fileBug(
   // The confirmation message is the thread root for attachment sync (Phase 2).
   // For the shortcut path the original message's thread is the root instead.
   if (posted.ok && posted.channel && posted.ts) {
-    repo.setThread(issue.key, posted.channel, input.metadata.threadTs ?? posted.ts);
+    const threadTs = input.metadata.threadTs ?? posted.ts;
+    repo.setThread(issue.key, posted.channel, threadTs);
+    await linkBackToSlack(context, { issueKey: issue.key, report, channel: posted.channel, threadTs });
   }
 
   return { issueKey: issue.key };
+}
+
+/**
+ * Add a link from the Jira issue back to the Slack thread.
+ *
+ * The thread only exists once the confirmation has been posted, so this is a
+ * second pass over the description rather than part of the create call. It
+ * matters because most reporters have no Jira account: without it, a developer
+ * triaging the issue sees a name and has no way to reach the person.
+ *
+ * Best effort - the issue is already filed and correct, so a failure here is
+ * logged and nothing more.
+ */
+async function linkBackToSlack(
+  context: BugbotContext,
+  input: { issueKey: string; report: BugReport; channel: string; threadTs: string },
+): Promise<void> {
+  const { log, notifier, issues } = context;
+
+  try {
+    const permalink = await notifier.permalink(input.channel, input.threadTs);
+    if (!permalink) return;
+
+    // renderDescription is deterministic, so re-rendering with one more field
+    // is safe and idempotent.
+    const { adf } = renderDescription({ ...input.report, slackThreadPermalink: permalink });
+    await issues.setDescription(input.issueKey, adf);
+  } catch (error) {
+    log.warn(
+      {
+        issueKey: input.issueKey,
+        err: error instanceof Error ? error.message : String(error),
+      },
+      'could not link the issue back to its Slack thread',
+    );
+  }
 }
 
 export function registerBugCommand(app: App, context: BugbotContext): void {

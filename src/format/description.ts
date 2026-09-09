@@ -58,8 +58,25 @@ function reproductionBullets(report: BugReport): AdfNode {
  * database, because SPEC 4 files everything under one service account - without
  * this line a reader cannot tell who actually hit the bug.
  */
+/**
+ * Who to contact, in descending order of usefulness.
+ *
+ * Most bugs are filed by someone with no Jira account, so the Jira `Reporter`
+ * field says "BugBot" and this line is the only record of the actual human.
+ * The email is what lets a reader find them in Slack or Jira, so it is
+ * included when we know it - a name alone is ambiguous, and a raw Slack id is
+ * useless to a person.
+ */
+function describeReporter(report: BugReport): string {
+  const { displayName, email, slackUserId } = report.reporter;
+  if (displayName && email) return `${displayName} <${email}>`;
+  if (displayName) return displayName;
+  if (email) return email;
+  if (slackUserId) return `Slack user ${slackUserId}`;
+  return 'unknown';
+}
+
 function footer(report: BugReport): AdfNode[] {
-  const who = report.reporter.displayName ?? report.reporter.slackUserId ?? 'unknown';
   const how =
     report.source === 'slack_modal'
       ? 'via the Slack /bug form'
@@ -67,12 +84,29 @@ function footer(report: BugReport): AdfNode[] {
         ? 'via the Slack "Report as bug" shortcut'
         : 'created directly in Jira';
 
-  const parts: AdfNode[] = [bold('Reported by: '), text(`${who} - ${how}`)];
+  const parts: AdfNode[] = [bold('Reported by: '), text(`${describeReporter(report)} - ${how}`)];
+
+  const links: AdfNode[] = [];
+  if (report.slackThreadPermalink) {
+    // The actionable one: replying here reaches the reporter and any file
+    // posted is attached to this issue automatically.
+    links.push(link('Slack thread (reply here to reach the reporter)', report.slackThreadPermalink));
+  }
   if (report.slackMessagePermalink) {
-    parts.push(text(' - '), link('original Slack message', report.slackMessagePermalink));
+    links.push(link('the message this was reported from', report.slackMessagePermalink));
   }
 
-  return [rule(), paragraph(...parts), paragraph(text('Filed by BugBot.'))];
+  const trailing: AdfNode[] = [];
+  if (links.length > 0) {
+    const withSeparators: AdfNode[] = [];
+    links.forEach((node, index) => {
+      if (index > 0) withSeparators.push(text('  •  '));
+      withSeparators.push(node);
+    });
+    trailing.push(paragraph(...withSeparators));
+  }
+
+  return [rule(), paragraph(...parts), ...trailing, paragraph(text('Filed by BugBot.'))];
 }
 
 export interface RenderedDescription {
