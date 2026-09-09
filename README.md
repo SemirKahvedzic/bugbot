@@ -53,6 +53,12 @@ locally:
 - **All three webhook guards, with logs to match**: a one-character-wrong secret gives 404
   ("bad secret - rejected"), a payload for another project gives 200 then
   "webhook for another project - rejected", and an unparseable body gives 400.
+- **Intake and attachment sync, end to end** (`SUP-6`). `/bug` filed the issue into
+  `Under Triage` with the priority the SPEC 6 matrix predicts (Minor x Always -> Medium) and all
+  seven labels; the description carries the environment, renumbered steps, expected versus actual
+  and the link back to the Slack thread; and four files posted in that thread were attached,
+  **including a 1.7 MB video** - which exercises the multipart upload and the
+  `X-Atlassian-Token` header that had never run for real.
 - **Routing**: `/` returns the service description, `/healthz` and `/readyz` return 200,
   unknown paths return 404 from the express app, and `/slack/events` returns 404 until Slack
   credentials are set.
@@ -97,13 +103,9 @@ doing.
 
 Covered by unit tests, but never exercised against the live services:
 
-- **Attachment sync has not completed once.** `/bug` files issues and the confirmation thread
-  appears, but files posted in that thread were not attached, because the bug channel is private
-  and the app only subscribed to public-channel messages. Fixed in the manifest; needs a
-  reinstall to take effect.
-- **The Jira webhook has never fired.** Nothing has been created in Jira directly yet, so the
-  native-intake half of the funnel, the feed card for it, and all of SPEC 7 routing are untested
-  against the live site.
+- **The Jira webhook has never fired**, because it has not been created yet - it needs a Jira
+  admin. Until then the native-intake half of the funnel, its feed card, status-change DMs and
+  all of SPEC 7 routing are untested against the live site.
 - **The message shortcut, `/mybugs`, App Home, `/triage` and `/bugstats`** have not been used.
 - **Whether `Under Triage` → `To Do` exists as a *transition***. The statuses all exist, but the
   workflow is restricted rather than global, so reaching `To Do` from `Under Triage` still needs

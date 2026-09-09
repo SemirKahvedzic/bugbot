@@ -41,17 +41,16 @@ export class Identity {
    */
   async forSlackUser(slackUserId: string): Promise<SlackIdentity> {
     const cached = await this.deps.repo.userBySlackId(slackUserId);
-    if (cached?.jira_account_id && cached.email) {
-      return {
-        slackUserId,
-        email: cached.email,
-        jiraAccountId: cached.jira_account_id,
-      };
-    }
 
     const identity: SlackIdentity = { slackUserId, email: cached?.email ?? undefined };
     if (cached?.jira_account_id) identity.jiraAccountId = cached.jira_account_id;
 
+    // Always read the profile, even when the cache has the email and the Jira
+    // account. An earlier version returned early here, which meant the display
+    // name was only ever fetched on someone's first report - so every bug
+    // after that showed a bare email address in the Jira footer instead of a
+    // name. The call this saved was the cheap one; the expensive lookup is the
+    // Jira account search below, and that is still cached.
     try {
       const profile = await this.deps.slack.users.info({ user: slackUserId });
       identity.displayName =
