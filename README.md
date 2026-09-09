@@ -612,6 +612,24 @@ one. If `Other` starts appearing often, that is the signal to add whatever peopl
 The list lives in `APPLICATIONS` in `src/types.ts`. The same slugified names are the keys used to
 configure team leaders, below.
 
+**Who may triage.** `/triage` and its buttons are limited to QA. Three groups get in:
+`SLACK_DEFAULT_TRIAGER`, everyone listed in `SLACK_TRIAGERS` (comma-separated Slack user ids),
+and every configured team leader. Leaders are included on purpose - they receive the escalations,
+so refusing them the queue would mean being told to look at a bug they are not allowed to touch.
+
+```
+SLACK_TRIAGERS=U08HVG0H2EL,U0123456789
+```
+
+Being refused prints who *is* allowed and which Slack id the service sees for you. The message
+used to say only "`/triage` is for QA", which is no help to the QA engineer reading it: it named
+neither, so a mistyped id and an environment change that has not been redeployed yet look
+identical. Both are also logged at `info` on every refusal.
+
+**Adding a triager takes a redeploy.** Vercel bakes environment variables in at build time, so
+`vercel env add` alone changes nothing until the next deploy. This is the usual reason a
+freshly-added id is still refused.
+
 **Team leaders.** Who gets DM'd when a bug is routed at `High` or escalated at `Highest`, set
 through one environment variable:
 

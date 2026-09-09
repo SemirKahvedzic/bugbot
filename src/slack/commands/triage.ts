@@ -22,10 +22,54 @@ export const REASSIGN_CALLBACK_ID = 'bugbot_reassign';
 const REASSIGN_BLOCK = 'assignee';
 const REASSIGN_ACTION = 'assignee_input';
 
-/** Who may drive the triage queue: the QA owner and any configured leader. */
+/**
+ * Everyone allowed to drive the triage queue.
+ *
+ * The QA owner, anyone in `SLACK_TRIAGERS`, and every configured team leader -
+ * the people who get escalations can also work the queue. An earlier version
+ * allowed exactly one person, which is wrong for any team with more than one,
+ * and there was no way to add a second.
+ */
+export function triagers(context: BugbotContext): string[] {
+  const allowed = new Set<string>([context.config.SLACK_DEFAULT_TRIAGER]);
+
+  for (const id of context.config.SLACK_TRIAGERS) allowed.add(id);
+
+  const fallbackLeader = context.leaders.forApplication(undefined).slackUserId;
+  if (fallbackLeader) allowed.add(fallbackLeader);
+  for (const application of context.leaders.configuredApplications()) {
+    const leader = context.leaders.forApplication(application).slackUserId;
+    if (leader) allowed.add(leader);
+  }
+
+  return [...allowed];
+}
+
 export function mayTriage(context: BugbotContext, slackUserId: string): boolean {
-  if (slackUserId === context.config.SLACK_DEFAULT_TRIAGER) return true;
-  return context.leaders.forApplication(undefined).slackUserId === slackUserId;
+  return triagers(context).includes(slackUserId);
+}
+
+/**
+ * Why someone was refused, in a form that diagnoses itself.
+ *
+ * The old message said only "`/triage` is for QA", which is useless to the QA
+ * engineer reading it: it does not say who is allowed, or which Slack id the
+ * service thinks they are. Those two facts separate "my id is configured
+ * wrongly" from "the deployment has not picked up the change yet", and without
+ * them the only way to tell is to go and read the logs.
+ */
+export function refusalMessage(context: BugbotContext, slackUserId: string): string {
+  const allowed = triagers(context)
+    .map((id) => `<@${id}>`)
+    .join(', ');
+
+  return (
+    `\`/triage\` is for QA, and you are not on the list. Use \`/mybugs\` to see your own reports.\n\n` +
+    `Currently allowed: ${allowed}\n` +
+    `You are <@${slackUserId}> (\`${slackUserId}\`).\n\n` +
+    'To add someone, put their Slack id in `SLACK_TRIAGERS` on the deployment — comma separated. ' +
+    'An environment change only takes effect after a redeploy.'
+  );
 }
 
 /**
@@ -63,10 +107,11 @@ export function registerTriageCommand(app: App, context: BugbotContext): void {
     await ack();
 
     if (!mayTriage(context, command.user_id)) {
-      await respond({
-        response_type: 'ephemeral',
-        text: '`/triage` is for QA. Use `/mybugs` to see your own reports.',
-      });
+      log.info(
+        { slackUserId: command.user_id, allowed: triagers(context) },
+        '/triage refused - the caller is not a configured triager',
+      );
+      await respond({ response_type: 'ephemeral', text: refusalMessage(context, command.user_id) });
       return;
     }
 
@@ -115,7 +160,11 @@ export function registerTriageCommand(app: App, context: BugbotContext): void {
       if (!issueKey) return;
 
       if (!mayTriage(context, body.user.id)) {
-        await respond({ response_type: 'ephemeral', text: 'That button is for QA.' });
+        log.info(
+          { slackUserId: body.user.id, allowed: triagers(context) },
+          'triage button refused - the caller is not a configured triager',
+        );
+        await respond({ response_type: 'ephemeral', text: refusalMessage(context, body.user.id) });
         return;
       }
 

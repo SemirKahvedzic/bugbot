@@ -79,6 +79,12 @@ export const configSchema = z.object({
   SLACK_SOCKET_MODE: bool.default('false'),
 
   SLACK_DEFAULT_TRIAGER: z.string().min(1),
+  /**
+   * Everyone else allowed to run `/triage` and press its buttons, as Slack
+   * user ids. SLACK_DEFAULT_TRIAGER and every configured team leader are
+   * always allowed, so this is only for additions.
+   */
+  SLACK_TRIAGERS: csv.default(''),
   SLACK_ANNOUNCE_CHANNEL: z.string().min(1),
   SLACK_DEV_CHANNEL: z.string().min(1),
   /**

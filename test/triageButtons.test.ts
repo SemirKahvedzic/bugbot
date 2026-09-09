@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { ACTION } from '../src/slack/actions.js';
-import { mayTriage, priorityForButton, runTriageButton } from '../src/slack/commands/triage.js';
+import {
+  mayTriage,
+  priorityForButton,
+  refusalMessage,
+  runTriageButton,
+  triagers,
+} from '../src/slack/commands/triage.js';
 import { fixtureIssue, makeTestContext, type TestHarness } from './helpers/context.js';
 import { countOf, rows } from './helpers/db.js';
 import type { Priority } from '../src/types.js';
@@ -20,9 +26,45 @@ beforeEach(async () => {
 });
 
 describe('mayTriage', () => {
-  it('lets the QA owner through and nobody else', async () => {
+  it('lets the QA owner through, and a stranger not at all', async () => {
     expect(mayTriage(harness.context, 'U_QA')).toBe(true);
     expect(mayTriage(harness.context, 'U_RANDOM')).toBe(false);
+  });
+
+  it('lets everyone in SLACK_TRIAGERS through', async () => {
+    // The whole point: a team with two QA engineers. The earlier version
+    // allowed exactly one person and offered no way to add a second.
+    const team = await makeTestContext({ SLACK_TRIAGERS: 'U_QA2, U_QA3' });
+
+    expect(mayTriage(team.context, 'U_QA')).toBe(true);
+    expect(mayTriage(team.context, 'U_QA2')).toBe(true);
+    expect(mayTriage(team.context, 'U_QA3')).toBe(true);
+    expect(mayTriage(team.context, 'U_RANDOM')).toBe(false);
+  });
+
+  it('lets a team leader work the queue as well', async () => {
+    // Leaders receive the escalations, so refusing them the queue would mean
+    // being told to look at a bug you are not allowed to touch.
+    const team = await makeTestContext({ BUGBOT_LEADERS: 'world.roarington.com=U_WORLD' });
+
+    expect(mayTriage(team.context, 'U_WORLD')).toBe(true);
+    expect(triagers(team.context)).toContain('U_WORLD');
+  });
+});
+
+describe('refusalMessage', () => {
+  it('names who is allowed and which id the service sees', async () => {
+    const team = await makeTestContext({ SLACK_TRIAGERS: 'U_QA2' });
+    const text = refusalMessage(team.context, 'U_RANDOM');
+
+    // Those two facts are what separate "my id is wrong" from "the deployment
+    // has not picked the change up yet". Without them the only way to tell is
+    // to go and read the logs.
+    expect(text).toContain('<@U_QA>');
+    expect(text).toContain('<@U_QA2>');
+    expect(text).toContain('U_RANDOM');
+    expect(text).toMatch(/SLACK_TRIAGERS/);
+    expect(text).toMatch(/redeploy/i);
   });
 });
 

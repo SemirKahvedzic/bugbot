@@ -216,7 +216,13 @@ export async function makeTestContext(
     slack: {},
     notifier,
     identity,
-    leaders: new Leaders({ fallbackSlackUserId: config.SLACK_DEFAULT_TRIAGER, log }),
+    // Wired from config exactly as src/app.ts does it, so a test can set
+    // BUGBOT_LEADERS and see the routing production would.
+    leaders: new Leaders({
+      ...(config.BUGBOT_LEADERS ? { config: config.BUGBOT_LEADERS } : {}),
+      fallbackSlackUserId: config.SLACK_DEFAULT_TRIAGER,
+      log,
+    }),
     serviceAccount: {
       accountId: SERVICE_ACCOUNT_ID,
       displayName: 'BugBot',
