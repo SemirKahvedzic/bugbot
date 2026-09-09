@@ -705,7 +705,16 @@ so they get the same notifications. If that lookup fails the bug still funnels; 
 DMs.
 
 **Reporter self-service.** `/mybugs` and the App Home tab show a reporter's own bugs grouped into
-Under Triage / In Progress / Ready for Validation / Closed. Both union the issue keys BugBot
+To Do / Under Triage / In Progress / Ready for Validation / Closed. SPEC 8 lists four of those and
+leaves *To Do* out; it is here because it is the board's first column and where backlog routing
+sends things, so bugs sit in it routinely and every one of them used to appear under *Other*.
+
+A card is the key and the summary on one line, then a line of metadata. The status is on the card
+only when the heading above does not already give it — under *Under Triage* it would be the same
+word twice, but *Closed* covers Done, Rejected, Duplicate and Cannot Reproduce and *In Progress*
+also matches In Review and In QA, so there it still has to be said. The status dot is on every
+card, and an unrecognised status gets a question mark rather than borrowing the dot that means
+"not started yet". Both union the issue keys BugBot
 recorded with `reporter = <accountId>` in Jira, so bugs filed both ways appear in one list. Any
 other status change sends one short DM, rate-limited to one per issue per five minutes.
 

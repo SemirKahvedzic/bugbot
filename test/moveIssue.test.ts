@@ -209,6 +209,43 @@ describe('bugCardBlocks', () => {
   });
 });
 
+describe('bugCardBlocks: what the card says', () => {
+  const cardText = (blocks: AnyBlock[]): string =>
+    (blocks[0] as { text?: { text?: string } }).text?.text ?? '';
+
+  it('spends the title line on the summary, not the status', () => {
+    const text = cardText(bugCardBlocks('https://jira.example', card));
+    expect(text).toContain('SUP-1');
+    expect(text).toContain('Brake lights lag');
+  });
+
+  it('leaves the status off when the heading above already names it', () => {
+    const blocks = bugCardBlocks('https://jira.example', card, { bucketLabel: 'Under Triage' });
+    // It was on every card and the cards are already sorted under that
+    // heading, so it was the same word twice.
+    expect(json(blocks)).not.toContain('Under Triage');
+  });
+
+  it('keeps the status when the heading covers several of them', () => {
+    // 'Closed' is Done, Rejected, Duplicate and Cannot Reproduce, so which one
+    // it is cannot be read off the heading.
+    const closed = { ...card, key: 'SUP-2', status: 'Rejected' };
+    expect(json(bugCardBlocks('https://jira.example', closed, { bucketLabel: 'Closed' }))).toContain(
+      'Rejected',
+    );
+
+    // Same for 'In Progress', which also matches In Review and In QA.
+    const inReview = { ...card, key: 'SUP-3', status: 'In Review' };
+    expect(
+      json(bugCardBlocks('https://jira.example', inReview, { bucketLabel: 'In Progress' })),
+    ).toContain('In Review');
+  });
+
+  it('keeps the status when there is no heading at all', () => {
+    expect(json(bugCardBlocks('https://jira.example', card))).toContain('Under Triage');
+  });
+});
+
 describe('homeView', () => {
   const base = {
     baseUrl: 'https://jira.example',

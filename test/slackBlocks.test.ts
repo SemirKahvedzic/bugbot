@@ -110,6 +110,7 @@ describe('intakeConfirmationBlocks (SPEC 5)', () => {
 
 describe('bucketIssues (SPEC 8)', () => {
   const issues: IssueSummaryLine[] = [
+    { key: 'SUP-0', summary: 'z', status: 'To Do' },
     { key: 'SUP-1', summary: 'a', status: 'Under Triage' },
     { key: 'SUP-2', summary: 'b', status: 'In Progress' },
     { key: 'SUP-3', summary: 'c', status: 'Ready for Validation' },
@@ -119,15 +120,18 @@ describe('bucketIssues (SPEC 8)', () => {
     { key: 'SUP-7', summary: 'g', status: 'Cannot Reproduce' },
   ];
 
-  it('groups into the four documented buckets', () => {
+  it('groups into the documented buckets, plus To Do', () => {
     const buckets = bucketIssues(issues);
+    // SPEC 8 lists four. To Do is the board's first column and where backlog
+    // routing puts things, so it earns a heading rather than falling to Other.
     expect(buckets.map((bucket) => bucket.label)).toEqual([
+      'To Do',
       'Under Triage',
       'In Progress',
       'Ready for Validation',
       'Closed',
     ]);
-    expect(buckets[3]!.issues.map((issue) => issue.key)).toEqual([
+    expect(buckets[4]!.issues.map((issue) => issue.key)).toEqual([
       'SUP-4',
       'SUP-5',
       'SUP-6',
@@ -217,7 +221,10 @@ describe('statusEmoji', () => {
   });
 
   it('has a fallback for a status nobody told us about', () => {
-    expect(statusEmoji('Blocked On Legal')).toBe(':black_circle:');
+    // Deliberately not the To Do dot: an unrecognised status should look
+    // unrecognised rather than borrow the one meaning "not started yet".
+    expect(statusEmoji('Blocked On Legal')).toBe(':grey_question:');
+    expect(statusEmoji('Blocked On Legal')).not.toBe(statusEmoji('To Do'));
   });
 });
 

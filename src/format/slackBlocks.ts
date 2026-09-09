@@ -244,12 +244,15 @@ export interface IssueSummaryLine {
  */
 export function statusEmoji(status: string): string {
   const s = status.toLowerCase();
+  if (/^to do$|^backlog$/.test(s)) return ':black_circle:';
   if (/under triage/.test(s)) return ':large_yellow_circle:';
   if (/in progress|in review|in qa/.test(s)) return ':large_blue_circle:';
   if (/ready for validation|ready/.test(s)) return ':large_purple_circle:';
   if (/rejected|duplicate|cannot reproduce/.test(s)) return ':white_circle:';
   if (/done/.test(s)) return ':white_check_mark:';
-  return ':black_circle:';
+  // An unrecognised status should look unrecognised rather than borrow the
+  // dot that means "not started yet".
+  return ':grey_question:';
 }
 
 /**
@@ -290,6 +293,15 @@ export interface BugCardOptions {
    * anyone who is not a triager sees.
    */
   moveTargets?: string[];
+  /**
+   * The heading the card sits under. When that heading already names the
+   * issue's status, the card leaves it out - the summary is worth the line.
+   *
+   * Not every heading does name it. 'Closed' covers Done, Rejected, Duplicate
+   * and Cannot Reproduce, 'In Progress' also matches In Review and In QA, and
+   * 'Other' names nothing at all, so under those the status stays on the card.
+   */
+  bucketLabel?: string;
 }
 
 /** Slack rejects an option value over 75 characters - and the whole view with it. */
@@ -342,7 +354,12 @@ export function bugCardBlocks(
     .filter(Boolean)
     .join(', ');
 
+  const statusNamedAbove =
+    options.bucketLabel !== undefined &&
+    options.bucketLabel.toLowerCase() === issue.status.toLowerCase();
+
   const meta = [
+    statusNamedAbove ? undefined : escape(issue.status),
     issue.priority ? `*${escape(issue.priority)}*` : undefined,
     detail ? escape(detail) : undefined,
     quality ? escape(quality) : undefined,
@@ -356,7 +373,10 @@ export function bugCardBlocks(
       text: {
         type: 'mrkdwn',
         text:
-          `${statusEmoji(issue.status)}  *<${url}|${issue.key}>*  ${escape(issue.status)}\n` +
+          // The key and the summary on one line. The status used to sit here
+          // and the summary below it, which spent the most valuable line in the
+          // card repeating the heading the card was already under.
+          `${statusEmoji(issue.status)}  *<${url}|${issue.key}>*  ` +
           escape(truncate(issue.summary, 200)),
       },
       // One accessory slot, and the move menu earns it: the issue key in the
@@ -381,6 +401,11 @@ function openButton(url: string) {
 }
 
 const STATUS_BUCKETS: Array<{ label: string; matches: (status: string) => boolean }> = [
+  // SPEC 8 lists four buckets and leaves To Do out. It needs to be here: it is
+  // the board's first column and the destination of backlog routing, so bugs
+  // sit in it routinely - and without a bucket of its own every one of them
+  // showed up under 'Other'.
+  { label: 'To Do', matches: (s) => /^to do$|^backlog$/i.test(s) },
   { label: 'Under Triage', matches: (s) => /under triage/i.test(s) },
   { label: 'In Progress', matches: (s) => /in progress|in review|in qa/i.test(s) },
   { label: 'Ready for Validation', matches: (s) => /ready for validation|ready/i.test(s) },
@@ -488,7 +513,9 @@ function cardSection(input: {
   for (const bucket of buckets) {
     blocks.push(section(`*${bucket.label}*`));
     for (const issue of bucket.issues) {
-      blocks.push(...bugCardBlocks(input.baseUrl, issue, input.cards));
+      blocks.push(
+        ...bugCardBlocks(input.baseUrl, issue, { ...input.cards, bucketLabel: bucket.label }),
+      );
     }
   }
 
