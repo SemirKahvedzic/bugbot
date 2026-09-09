@@ -24,9 +24,10 @@ Full requirements live in `SPEC.md`. Section references below (`SPEC 7`) point t
 
 ## Status
 
-All phases are **built and tested** — 281 unit tests plus 13 integration tests against the real
-Neon database — and **deployed and verified on Vercel**. The Jira side works end to end. What is
-left is Slack: the app does not exist yet, so nothing Slack-facing has run for real.
+All phases are **built and tested** — 341 unit tests plus 13 integration tests against the real
+Neon database — and **deployed on Vercel**. The Slack app exists and `/bug` files real issues
+end to end. Attachment sync and the Jira webhook are the parts still being brought up; see *What
+is still not verified*.
 
 | Phase | Scope | State |
 |---|---|---|
@@ -96,8 +97,14 @@ doing.
 
 Covered by unit tests, but never exercised against the live services:
 
-- **No Slack app exists yet**, so no command, modal, shortcut, event or button has run for real.
-  `/slack/events` correctly 404s until `SLACK_BOT_TOKEN` and `SLACK_SIGNING_SECRET` are set.
+- **Attachment sync has not completed once.** `/bug` files issues and the confirmation thread
+  appears, but files posted in that thread were not attached, because the bug channel is private
+  and the app only subscribed to public-channel messages. Fixed in the manifest; needs a
+  reinstall to take effect.
+- **The Jira webhook has never fired.** Nothing has been created in Jira directly yet, so the
+  native-intake half of the funnel, the feed card for it, and all of SPEC 7 routing are untested
+  against the live site.
+- **The message shortcut, `/mybugs`, App Home, `/triage` and `/bugstats`** have not been used.
 - **Whether `Under Triage` → `To Do` exists as a *transition***. The statuses all exist, but the
   workflow is restricted rather than global, so reaching `To Do` from `Under Triage` still needs
   checking with `npm run discover -- --issue=<key>` on an issue actually in triage. If it is
