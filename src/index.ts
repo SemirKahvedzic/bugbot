@@ -264,12 +264,25 @@ async function main(): Promise<void> {
       registerSlackHandlers(boltApp, context);
     }
 
+    // The idempotency ledger only needs recent history; without this it grows
+    // by one row per notification forever.
+    const pruned = context.repo.pruneNotifications(30);
+    if (pruned > 0) log.info({ pruned }, 'pruned old notification records');
+
     if (config.JIRA_WEBHOOK_SECRET) {
       expressApp.use('/jira', createJiraWebhookRouter(context));
       log.info(
         { allowlist: config.JIRA_WEBHOOK_IP_ALLOWLIST.length },
         'Jira webhook mounted at /jira/webhook/:secret',
       );
+      if (!slackConfigured) {
+        // Worth saying out loud: routing will move issues and write labels,
+        // but every notification will fail and be logged as an error.
+        log.warn(
+          'the Jira webhook is live but Slack is not configured - issues will be routed in ' +
+            'Jira and nobody will be told about it',
+        );
+      }
     } else {
       log.warn(
         'JIRA_WEBHOOK_SECRET is not set - the Jira webhook is not mounted, so nothing is ' +
