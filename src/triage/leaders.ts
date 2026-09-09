@@ -1,84 +1,137 @@
 /**
  * Per-application team leader lookup (SPEC 9.2).
  *
- * Loaded from config/leaders.json when present. The file is optional: with no
- * file, or no entry for an application, everything falls back to the default
- * triager from env, so routing never silently fails to notify anyone.
+ * Configured through one environment variable rather than a file. The file
+ * version could not work on Vercel: `config/leaders.json` was gitignored, the
+ * deployment is built from the repo, so the file was never there and every
+ * escalation silently went to the default triager. An environment variable is
+ * also simply easier to edit than a committed file.
+ *
+ * Format - `application=slackUserId`, comma separated:
+ *
+ *   BUGBOT_LEADERS=world.roarington.com=U123ABC,drive.roarington.com=U456DEF
+ *
+ * The application is the slugified name, which is exactly what the `app:`
+ * label on the issue carries. `default=U789` overrides the fallback;
+ * otherwise `SLACK_DEFAULT_TRIAGER` is the fallback.
+ *
+ * Only a Slack id is configured. An earlier version also took a Jira
+ * accountId, which nothing ever read - routing DMs the leader, it does not
+ * assign the issue - so it was a field people would fill in that did nothing.
  */
-import { readFileSync } from 'node:fs';
-import { z } from 'zod';
 import type { Logger } from 'pino';
-
-const leaderSchema = z.object({
-  slack: z.string().default(''),
-  jira: z.string().default(''),
-});
-
-const leadersFileSchema = z.object({
-  default: leaderSchema.optional(),
-  applications: z.record(z.string(), leaderSchema).default({}),
-});
+import { APPLICATIONS, slugify } from '../types.js';
 
 export interface Leader {
   slackUserId?: string;
-  jiraAccountId?: string;
 }
 
 export interface LeadersOptions {
-  /** Path to config/leaders.json. Absent file is fine. */
-  path?: string;
-  /** Used when the file has no default and no application entry. */
+  /** Raw value of BUGBOT_LEADERS. Absent or empty is fine. */
+  config?: string;
+  /** Used for any application with no entry of its own. */
   fallbackSlackUserId: string;
   log: Logger;
 }
 
+export interface ParsedLeaders {
+  byApplication: Map<string, string>;
+  /** `default=U123` in the config, if given. */
+  fallback?: string;
+  /** Entries that could not be used, with the reason. */
+  problems: string[];
+}
+
+const DEFAULT_KEY = 'default';
+
+/** Every key the config may use: the app labels, plus `default`. */
+export function validLeaderKeys(): string[] {
+  return [...APPLICATIONS.map(slugify), DEFAULT_KEY];
+}
+
+/**
+ * Parse the environment format.
+ *
+ * Unknown application keys are reported rather than ignored. A typo there
+ * cannot fail loudly on its own - the lookup just misses and falls back - so
+ * whoever set it would see escalations going to the wrong person with nothing
+ * in the logs to explain it.
+ */
+export function parseLeaders(config: string | undefined): ParsedLeaders {
+  const byApplication = new Map<string, string>();
+  const problems: string[] = [];
+  let fallback: string | undefined;
+
+  const valid = new Set(validLeaderKeys());
+
+  for (const entry of (config ?? '').split(',')) {
+    const trimmed = entry.trim();
+    if (trimmed.length === 0) continue;
+
+    const separator = trimmed.indexOf('=');
+    if (separator <= 0) {
+      problems.push(`"${trimmed}" is not application=slackUserId`);
+      continue;
+    }
+
+    const application = trimmed.slice(0, separator).trim().toLowerCase();
+    const slackUserId = trimmed.slice(separator + 1).trim();
+
+    if (slackUserId.length === 0) {
+      problems.push(`"${application}" has no Slack user id`);
+      continue;
+    }
+    if (!valid.has(application)) {
+      problems.push(
+        `"${application}" is not a known application - expected one of ${validLeaderKeys().join(', ')}`,
+      );
+      continue;
+    }
+
+    if (application === DEFAULT_KEY) fallback = slackUserId;
+    else byApplication.set(application, slackUserId);
+  }
+
+  return { byApplication, ...(fallback ? { fallback } : {}), problems };
+}
+
 export class Leaders {
-  private readonly byApplication = new Map<string, Leader>();
+  private readonly byApplication: Map<string, string>;
   private readonly fallback: Leader;
 
   constructor(options: LeadersOptions) {
-    this.fallback = { slackUserId: options.fallbackSlackUserId };
+    const parsed = parseLeaders(options.config);
 
-    if (!options.path) return;
+    this.byApplication = parsed.byApplication;
+    this.fallback = { slackUserId: parsed.fallback ?? options.fallbackSlackUserId };
 
-    let parsed: z.infer<typeof leadersFileSchema>;
-    try {
-      const raw = JSON.parse(readFileSync(options.path, 'utf8')) as unknown;
-      parsed = leadersFileSchema.parse(raw);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      // ENOENT is the expected state until someone fills the file in.
-      if (/ENOENT/.test(message)) {
-        options.log.info(
-          { path: options.path },
-          'no leaders config - every escalation goes to the default triager',
-        );
-      } else {
-        options.log.warn(
-          { path: options.path, err: message },
-          'could not read leaders config - falling back to the default triager',
-        );
-      }
-      return;
+    for (const problem of parsed.problems) {
+      options.log.warn({ problem }, 'ignoring a BUGBOT_LEADERS entry');
     }
 
-    if (parsed.default?.slack) {
-      this.fallback = toLeader(parsed.default);
+    if (parsed.byApplication.size === 0 && !parsed.fallback) {
+      options.log.info(
+        { fallback: this.fallback.slackUserId },
+        'no per-application leaders configured - every escalation goes to the default triager',
+      );
+    } else {
+      options.log.info(
+        { applications: [...parsed.byApplication.keys()], hasDefault: Boolean(parsed.fallback) },
+        'team leaders configured',
+      );
     }
-    for (const [application, leader] of Object.entries(parsed.applications)) {
-      if (leader.slack || leader.jira) this.byApplication.set(application.toLowerCase(), toLeader(leader));
-    }
-
-    options.log.info(
-      { applications: [...this.byApplication.keys()] },
-      'leaders config loaded',
-    );
   }
 
   /** The leader for an application, or the fallback. Never undefined. */
   forApplication(application: string | undefined): Leader {
     if (!application) return this.fallback;
-    return this.byApplication.get(application.toLowerCase()) ?? this.fallback;
+    const slackUserId = this.byApplication.get(application.toLowerCase());
+    return slackUserId ? { slackUserId } : this.fallback;
+  }
+
+  /** Every application that has a leader of its own. */
+  configuredApplications(): string[] {
+    return [...this.byApplication.keys()];
   }
 
   /**
@@ -89,11 +142,4 @@ export class Leaders {
     const label = labels?.find((value) => value.startsWith('app:'));
     return label?.slice('app:'.length);
   }
-}
-
-function toLeader(input: { slack: string; jira: string }): Leader {
-  return {
-    ...(input.slack ? { slackUserId: input.slack } : {}),
-    ...(input.jira ? { jiraAccountId: input.jira } : {}),
-  };
 }

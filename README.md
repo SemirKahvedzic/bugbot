@@ -597,9 +597,28 @@ It is a different channel from `SLACK_ANNOUNCE_CHANNEL`, which only carries tria
 filed rather than filed against the wrong application; a wrong `app:` label is worse than a vague
 one. If `Other` starts appearing often, that is the signal to add whatever people are hitting.
 
-The list lives in `APPLICATIONS` in `src/types.ts`, and the keys in `config/leaders.example.json`
-have to match it after slugifying - a test enforces that, because a mismatch does not error, it
-just silently sends every escalation to the default triager instead of the application's leader.
+The list lives in `APPLICATIONS` in `src/types.ts`. The same slugified names are the keys used to
+configure team leaders, below.
+
+**Team leaders.** Who gets DM'd when a bug is routed at `High` or escalated at `Highest`, set
+through one environment variable:
+
+```
+BUGBOT_LEADERS=world.roarington.com=U123ABC,drive.roarington.com=U456DEF
+```
+
+The key is the slugified application, which is exactly what the issue's `app:` label carries.
+`default=U789` overrides `SLACK_DEFAULT_TRIAGER` as the fallback; anything without an entry of
+its own reaches the fallback, so an escalation always gets to somebody.
+
+An unknown key is logged as a problem at boot rather than ignored. A typo cannot fail loudly on
+its own - the lookup just misses and falls back - so without that line you would see escalations
+going to the wrong person with nothing to explain it.
+
+This used to be `config/leaders.json`, which could never work: the file was gitignored and the
+deployment is built from the repo, so it was never present and every escalation silently went to
+the default triager. It also asked for a Jira accountId that nothing ever read - routing DMs the
+leader, it does not assign the issue.
 
 **Filing a bug.** `/bug` opens a form. **Eight fields are required** — summary, application,
 environment, device, steps, actual result, severity and frequency — and the rest are optional, so

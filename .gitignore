@@ -8,6 +8,5 @@ dist/
 *.db-wal
 data/
 discovery.json
-config/leaders.json
 *.log
 .DS_Store

@@ -13,7 +13,6 @@
 import { App, ExpressReceiver } from '@slack/bolt';
 import { WebClient } from '@slack/web-api';
 import express, { type Application } from 'express';
-import { resolve } from 'node:path';
 import { ConfigError, getConfig, hasSlackConfig, requireSlack, type Config } from './config.js';
 import type { BugbotContext } from './context.js';
 import { getDatabase, pingDatabase, type Db } from './db/index.js';
@@ -173,7 +172,7 @@ async function buildContext(input: {
     notifier: new Notifier(slack, log),
     identity: new Identity({ slack, issues, repo, log }),
     leaders: new Leaders({
-      path: resolve(process.cwd(), 'config/leaders.json'),
+      ...(config.BUGBOT_LEADERS ? { config: config.BUGBOT_LEADERS } : {}),
       fallbackSlackUserId: config.SLACK_DEFAULT_TRIAGER,
       log,
     }),

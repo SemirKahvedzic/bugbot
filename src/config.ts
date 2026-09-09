@@ -90,6 +90,19 @@ export const configSchema = z.object({
    */
   SLACK_BUG_FEED_CHANNEL: z.string().min(1).optional(),
   SLACK_BUG_CHANNEL_ALLOWLIST: csv.default(''),
+  /**
+   * Per-application team leaders (SPEC 9.2), as
+   * `application=slackUserId` pairs separated by commas:
+   *
+   *   world.roarington.com=U123ABC,drive.roarington.com=U456DEF
+   *
+   * The application is the slugified name, matching the issue's `app:` label.
+   * `default=U789` overrides SLACK_DEFAULT_TRIAGER as the fallback.
+   *
+   * An environment variable rather than a file because the deployment is built
+   * from the repo, so a gitignored config file never reaches it.
+   */
+  BUGBOT_LEADERS: z.string().optional(),
   ESCALATION_MENTION: z.enum(['none', 'here', 'channel']).default('none'),
 
   // --- Runtime ---
