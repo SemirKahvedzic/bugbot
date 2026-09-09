@@ -14,7 +14,7 @@ import { App, ExpressReceiver } from '@slack/bolt';
 import { WebClient } from '@slack/web-api';
 import express, { type Application } from 'express';
 import { resolve } from 'node:path';
-import { getConfig, hasSlackConfig, requireSlack, type Config } from './config.js';
+import { ConfigError, getConfig, hasSlackConfig, requireSlack, type Config } from './config.js';
 import type { BugbotContext } from './context.js';
 import { getDatabase, pingDatabase, type Db } from './db/index.js';
 import { Repo } from './db/repo.js';
@@ -260,13 +260,13 @@ export async function bootstrap(): Promise<BuiltApp> {
  */
 export function createFailClosedApp(error: unknown): Application {
   const message = error instanceof Error ? error.message : String(error);
-  const configProblem = error instanceof JiraMetaError;
+  const configProblem = error instanceof JiraMetaError || error instanceof ConfigError;
   const log = logger();
 
   log.fatal(
     { err: message, configProblem },
     configProblem
-      ? 'Jira configuration does not match the live site - fix the environment and redeploy'
+      ? 'configuration is wrong - fix the environment and redeploy'
       : 'bootstrap failed - serving 503 until the next cold start',
   );
 

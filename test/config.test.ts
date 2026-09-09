@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
+  ConfigError,
   formatConfigError,
   hasSlackConfig,
   loadConfig,
   MissingSlackConfigError,
   requireSlack,
+  withoutBlanks,
 } from '../src/config.js';
 
 /** The smallest env that should boot: the Jira block plus Slack identifiers. */
@@ -94,6 +96,95 @@ describe('loadConfig', () => {
 
   it('rejects a webhook secret that is too short to be worth having', () => {
     expect(() => loadConfig({ ...baseEnv, JIRA_WEBHOOK_SECRET: 'short' })).toThrow(z.ZodError);
+  });
+});
+
+describe('blank values are treated as absent', () => {
+  /**
+   * The first Vercel deployment imported all thirty keys from .env.example
+   * with empty values. A zod .default() only fires on undefined, so every
+   * default was defeated at once and the function failed to boot.
+   */
+  it('lets defaults apply when a variable is present but empty', () => {
+    const config = loadConfig({
+      ...baseEnv,
+      JIRA_PROJECT_KEY: '',
+      JIRA_ISSUE_TYPE: '',
+      JIRA_STATUS_TRIAGE: '',
+      JIRA_SET_REAL_REPORTER: '',
+      ESCALATION_MENTION: '',
+      DATABASE_POOL_MAX: '',
+      LOG_LEVEL: '',
+    });
+
+    expect(config.JIRA_PROJECT_KEY).toBe('SUP');
+    expect(config.JIRA_ISSUE_TYPE).toBe('Finding');
+    expect(config.JIRA_STATUS_TRIAGE).toBe('Under Triage');
+    expect(config.JIRA_SET_REAL_REPORTER).toBe(true);
+    expect(config.ESCALATION_MENTION).toBe('none');
+    expect(config.DATABASE_POOL_MAX).toBe(5);
+    expect(config.LOG_LEVEL).toBe('info');
+  });
+
+  it('treats an empty optional credential as absent, not as a bad value', () => {
+    const config = loadConfig({
+      ...baseEnv,
+      SLACK_BOT_TOKEN: '',
+      SLACK_SIGNING_SECRET: '',
+      SLACK_APP_TOKEN: '',
+      JIRA_WEBHOOK_SECRET: '',
+    });
+
+    expect(config.SLACK_BOT_TOKEN).toBeUndefined();
+    expect(config.JIRA_WEBHOOK_SECRET).toBeUndefined();
+    expect(hasSlackConfig(config)).toBe(false);
+  });
+
+  it('treats whitespace as empty too', () => {
+    const config = loadConfig({ ...baseEnv, JIRA_PROJECT_KEY: '   ' });
+    expect(config.JIRA_PROJECT_KEY).toBe('SUP');
+  });
+
+  it('still rejects a required variable that is empty', () => {
+    // Blank is absent, and absent is still fatal for these.
+    expect(() => loadConfig({ ...baseEnv, DATABASE_URL: '' })).toThrow(z.ZodError);
+    expect(() => loadConfig({ ...baseEnv, JIRA_API_TOKEN: '' })).toThrow(z.ZodError);
+  });
+
+  it('does not strip a legitimately meaningful value', () => {
+    const config = loadConfig({ ...baseEnv, JIRA_PROJECT_KEY: 'SOFT', LOG_LEVEL: 'debug' });
+    expect(config.JIRA_PROJECT_KEY).toBe('SOFT');
+    expect(config.LOG_LEVEL).toBe('debug');
+  });
+});
+
+describe('withoutBlanks', () => {
+  it('drops blank keys and keeps everything else', () => {
+    expect(withoutBlanks({ a: 'x', b: '', c: '  ', d: 'y' })).toEqual({ a: 'x', d: 'y' });
+  });
+
+  it('leaves the original object alone', () => {
+    const env = { a: '', b: 'x' };
+    withoutBlanks(env);
+    expect(env).toEqual({ a: '', b: 'x' });
+  });
+});
+
+describe('getConfig', () => {
+  it('throws a ConfigError listing every fault, rather than exiting', () => {
+    // process.exit in a serverless function surfaces only as
+    // FUNCTION_INVOCATION_FAILED, with the reason buried in the logs.
+    const error = new z.ZodError([
+      { code: 'custom', path: ['DATABASE_URL'], message: 'Required' },
+      { code: 'custom', path: ['JIRA_API_TOKEN'], message: 'Required' },
+    ]);
+    const configError = new ConfigError(error);
+
+    expect(configError).toBeInstanceOf(Error);
+    expect(configError.name).toBe('ConfigError');
+    expect(configError.message).toContain('DATABASE_URL');
+    expect(configError.message).toContain('JIRA_API_TOKEN');
+    expect(configError.message).toContain('.env.example');
   });
 });
 

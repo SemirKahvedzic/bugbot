@@ -11,6 +11,28 @@
  */
 import { z } from 'zod';
 
+/**
+ * Drop keys whose value is blank.
+ *
+ * This matters more than it looks. A zod `.default()` only applies when the
+ * value is `undefined` - a present-but-empty string defeats it. Every way
+ * these variables actually get set produces empty strings freely: a `.env`
+ * file with `KEY=`, and Vercel's "import from .env.example", which is exactly
+ * how the first deployment ended up with thirty blank variables and no
+ * defaults at all.
+ *
+ * Treating blank as absent is also just the honest reading: nobody sets a
+ * variable to the empty string meaning "the empty string".
+ */
+export function withoutBlanks(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(env)) {
+    if (typeof value === 'string' && value.trim() === '') continue;
+    out[key] = value;
+  }
+  return out;
+}
+
 const csv = z
   .string()
   .transform((s) => s.split(',').map((v) => v.trim()).filter(Boolean));
@@ -81,7 +103,7 @@ export type Config = z.infer<typeof configSchema>;
 
 /** Parse without side effects. Throws a ZodError. Used by tests. */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  return configSchema.parse(env);
+  return configSchema.parse(withoutBlanks(env));
 }
 
 /** Render a ZodError as one human-readable block. */
@@ -90,11 +112,24 @@ export function formatConfigError(error: z.ZodError): string {
   return `Invalid environment configuration:\n${lines.join('\n')}\n\nSee .env.example.`;
 }
 
+/** An unusable environment. Carries the full report, not just the first fault. */
+export class ConfigError extends Error {
+  constructor(readonly zodError: z.ZodError) {
+    super(formatConfigError(zodError));
+    this.name = 'ConfigError';
+  }
+}
+
 let cached: Config | undefined;
 
 /**
- * Memoised config for application code. Exits the process on invalid env -
- * booting half-configured is worse than not booting (SPEC 3, "fail fast").
+ * Memoised config for application code.
+ *
+ * Throws rather than calling process.exit. Exiting is right for a server and
+ * useless in a serverless function: the runtime reports only
+ * FUNCTION_INVOCATION_FAILED and the reason is buried in the logs. Throwing
+ * lets the caller decide - `src/index.ts` logs and exits, `api/index.ts`
+ * serves 503 with the actual list of bad variables in the response body.
  */
 export function getConfig(): Config {
   if (cached) return cached;
@@ -102,10 +137,7 @@ export function getConfig(): Config {
     cached = loadConfig();
     return cached;
   } catch (error) {
-    if (error instanceof z.ZodError) {
-      process.stderr.write(`${formatConfigError(error)}\n`);
-      process.exit(1);
-    }
+    if (error instanceof z.ZodError) throw new ConfigError(error);
     throw error;
   }
 }

@@ -14,13 +14,27 @@ import 'dotenv/config';
 import { App } from '@slack/bolt';
 import type { Application } from 'express';
 import { bootstrap, createFailClosedApp, type BuiltApp } from './app.js';
-import { getConfig, requireSlack } from './config.js';
+import { ConfigError, getConfig, requireSlack } from './config.js';
 import { closeDatabase } from './db/index.js';
 import { logger } from './logger.js';
 import { registerSlackHandlers } from './slack/register.js';
 
 async function main(): Promise<void> {
   const log = logger();
+
+  // Config first, and fatally: a server with an unusable environment has
+  // nothing useful to offer, and the message lists every bad variable at once.
+  // (A serverless function behaves differently - see api/index.ts.)
+  let config;
+  try {
+    config = getConfig();
+  } catch (error) {
+    if (error instanceof ConfigError) {
+      process.stderr.write(`${error.message}\n`);
+      process.exit(1);
+    }
+    throw error;
+  }
 
   let built: BuiltApp | undefined;
   let expressApp: Application;
@@ -33,8 +47,6 @@ async function main(): Promise<void> {
     // configuration mismatch that no amount of retrying will fix.
     expressApp = createFailClosedApp(error);
   }
-
-  const config = getConfig();
 
   const server = expressApp.listen(config.PORT, () => {
     log.info(
