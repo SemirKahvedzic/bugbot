@@ -1,5 +1,4 @@
 {
-  "_comment": "Slack app manifest for BugBot. Create the app at https://api.slack.com/apps -> Create New App -> From an app manifest, paste this, then replace every REPLACE_WITH_PUBLIC_HOST occurrence with the real host (https://bugbot.fly.dev for the Fly deploy, or the ngrok HTTPS URL for local development). README.md explains why each scope is needed.",
   "display_information": {
     "name": "BugBot",
     "description": "Guided bug intake and triage for Roarington QA",
@@ -19,26 +18,26 @@
     "slash_commands": [
       {
         "command": "/bug",
-        "url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+        "url": "https://bugbot-eight.vercel.app/slack/events",
         "description": "Report a bug with the guided QA form",
         "usage_hint": "[short summary]",
         "should_escape": false
       },
       {
         "command": "/mybugs",
-        "url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+        "url": "https://bugbot-eight.vercel.app/slack/events",
         "description": "Show the status of bugs you reported",
         "should_escape": false
       },
       {
         "command": "/triage",
-        "url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+        "url": "https://bugbot-eight.vercel.app/slack/events",
         "description": "List bugs awaiting triage, with routing buttons (QA only)",
         "should_escape": false
       },
       {
         "command": "/bugstats",
-        "url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+        "url": "https://bugbot-eight.vercel.app/slack/events",
         "description": "Weekly bug intake and triage summary",
         "should_escape": false
       }
@@ -68,7 +67,7 @@
   },
   "settings": {
     "event_subscriptions": {
-      "request_url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+      "request_url": "https://bugbot-eight.vercel.app/slack/events",
       "bot_events": [
         "app_home_opened",
         "message.channels"
@@ -76,7 +75,7 @@
     },
     "interactivity": {
       "is_enabled": true,
-      "request_url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events"
+      "request_url": "https://bugbot-eight.vercel.app/slack/events"
     },
     "org_deploy_enabled": false,
     "socket_mode_enabled": false,
