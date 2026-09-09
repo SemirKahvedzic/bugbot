@@ -56,6 +56,18 @@ locally:
   unknown paths return 404 from the express app, and `/slack/events` returns 404 until Slack
   credentials are set.
 
+### Changing an environment variable needs a redeploy
+
+Vercel bakes environment variables into a deployment when it is built. Editing one in the
+dashboard does nothing to deployments that already exist, so the change appears to be ignored
+until the next build.
+
+This is worth knowing before it wastes an hour: after adding `SLACK_BOT_TOKEN` and
+`SLACK_SIGNING_SECRET`, the app will keep logging *"Slack is not configured"* and `/slack/events`
+will keep returning 404 until you redeploy. It looks exactly like the tokens being wrong.
+
+Dashboard → Deployments → `⋯` on the latest → **Redeploy**, or `vercel redeploy <url>`.
+
 ### Why the compile script is called `compile`, not `build`
 
 This matters, and it is not a style choice.
