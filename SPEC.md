@@ -157,10 +157,15 @@ selected message and keeps a permalink to it.
 
 Fields (all required unless marked optional):
 
+> **Amended.** Requiring almost all of these made filing slow enough to discourage it. Eight are
+> required now - summary, application, environment, device, steps, actual result, severity and
+> frequency - and the rest are optional, with what was left out named in the description and on
+> the feed card. See *Filing a bug* in `README.md`.
+
 | Field | Type | Options / hint |
 |---|---|---|
 | Summary | plain text | one line, max 120 chars |
-| Application | select | `world.roarington.com`, `dreamland.roarington.com`, Car Studio, Media/editorial, Other |
+| Application | select | `world.roarington.com`, `dreamland.roarington.com`, Car Studio, Media/editorial, Other &nbsp;→ *replaced with the six applications QA actually tracks; see `APPLICATIONS` in `src/types.ts`* |
 | Environment | select | Production, Staging, Local |
 | Device | select + free text | Desktop, Laptop, Tablet, Phone, TV/console + model field |
 | OS / OS version | plain text | e.g. `Android 15`, `iOS 18.2`, `Windows 11` |

@@ -193,10 +193,10 @@ describe('bugFeedBlocks: a bug filed straight into Jira', () => {
         issueUrl: 'x',
         summary: 'a',
         source: 'jira_native',
-        labels: ['src:jira', 'app:car-studio', 'sev:minor'],
+        labels: ['src:jira', 'app:drive.roarington.com', 'sev:minor'],
       }),
     );
-    expect(text).toContain('car-studio');
+    expect(text).toContain('drive.roarington.com');
     expect(text).toContain('minor');
   });
 

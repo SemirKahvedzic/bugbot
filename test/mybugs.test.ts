@@ -3,6 +3,8 @@ import { buildMyBugsJql, jqlUrl, toSummaryLine } from '../src/slack/commands/myb
 import { collectStats, formatDuration, statsBlocks, type Stats } from '../src/slack/commands/bugstats.js';
 import { Leaders } from '../src/triage/leaders.js';
 import { createLogger } from '../src/logger.js';
+import { readFileSync } from 'node:fs';
+import { APPLICATIONS, slugify } from '../src/types.js';
 import { fixtureIssue, makeTestContext } from './helpers/context.js';
 
 describe('buildMyBugsJql (SPEC 8)', () => {
@@ -116,6 +118,25 @@ describe('Leaders (SPEC 9.2)', () => {
     expect(Leaders.applicationFromLabels(['src:slack'])).toBeUndefined();
     expect(Leaders.applicationFromLabels(undefined)).toBeUndefined();
   });
+
+  it('has an example config whose keys match the labels BugBot actually writes', () => {
+    // Leader lookup goes application-label -> config key. A mismatch does not
+    // error: every escalation just quietly falls back to the default triager,
+    // and the per-application leaders someone carefully filled in are never
+    // used. So the two lists have to be checked against each other.
+    const example = JSON.parse(
+      readFileSync('config/leaders.example.json', 'utf8'),
+    ) as { applications: Record<string, unknown> };
+
+    expect(Object.keys(example.applications)).toEqual(APPLICATIONS.map(slugify));
+  });
+
+  it('resolves a leader by the label, not by the display name', async () => {
+    const leaders = new Leaders({ fallbackSlackUserId: 'U_QA', log });
+    // 'Other' becomes 'other' as a label, and that is what routing looks up.
+    expect(Leaders.applicationFromLabels(['app:other'])).toBe('other');
+    expect(leaders.forApplication('other')).toEqual({ slackUserId: 'U_QA' });
+  });
 });
 
 describe('bugstats (SPEC 8)', () => {
@@ -137,7 +158,7 @@ describe('bugstats (SPEC 8)', () => {
     );
     harness.issuesByKey.set(
       'SUP-3',
-      fixtureIssue({ key: 'SUP-3', labels: ['app:car-studio', 'sev:major'] }),
+      fixtureIssue({ key: 'SUP-3', labels: ['app:drive.roarington.com', 'sev:major'] }),
     );
 
     const stats = await collectStats(harness.context, 7);
@@ -145,7 +166,7 @@ describe('bugstats (SPEC 8)', () => {
     expect(stats.total).toBe(3);
     expect(stats.byApplication).toEqual([
       { application: 'world.roarington.com', count: 2 },
-      { application: 'car-studio', count: 1 },
+      { application: 'drive.roarington.com', count: 1 },
     ]);
     expect(stats.bySeverity).toEqual([
       { severity: 'major', count: 2 },

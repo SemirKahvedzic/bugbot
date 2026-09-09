@@ -252,11 +252,11 @@ describe('labels (SPEC 5)', () => {
 
   it('never produces a label with whitespace, which Jira rejects', () => {
     const labels = buildLabels(
-      { ...baseReport, application: 'Media/editorial', frequency: 'Happened once', device: 'TV/console' },
+      { ...baseReport, application: 'Other', frequency: 'Happened once', device: 'TV/console' },
       'Lowest',
     );
     for (const label of labels) expect(label).not.toMatch(/\s/);
-    expect(labels).toContain('app:media-editorial');
+    expect(labels).toContain('app:other');
     expect(labels).toContain('freq:happened-once');
     expect(labels).toContain('dev:tv');
   });
@@ -269,7 +269,9 @@ describe('labels (SPEC 5)', () => {
 
   it('slugifies predictably', () => {
     expect(slugify('world.roarington.com')).toBe('world.roarington.com');
+    expect(slugify('auth.roarington.com')).toBe('auth.roarington.com');
     expect(slugify('Car Studio')).toBe('car-studio');
+    expect(slugify('Media/editorial')).toBe('media-editorial');
     expect(slugify('  Gamepad/joystick ')).toBe('gamepad-joystick');
   });
 });

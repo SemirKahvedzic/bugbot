@@ -6,11 +6,21 @@
  * the submission parser validates against them.
  */
 
+/**
+ * The applications QA actually tracks.
+ *
+ * `Other` is kept as a last resort: without it, a bug in something not listed
+ * either cannot be filed or gets filed against the wrong application, and a
+ * wrong `app:` label is worse than a vague one. If `Other` starts showing up
+ * often, that is the signal to add whatever people are hitting.
+ */
 export const APPLICATIONS = [
+  'roarington.com',
   'world.roarington.com',
-  'dreamland.roarington.com',
-  'Car Studio',
-  'Media/editorial',
+  'drive.roarington.com',
+  'staff.roarington.com',
+  'people.roarington.com',
+  'auth.roarington.com',
   'Other',
 ] as const;
 

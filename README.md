@@ -591,6 +591,16 @@ issue so a redelivered webhook cannot produce a second card.
 It is a different channel from `SLACK_ANNOUNCE_CHANNEL`, which only carries triage escalations.
 **The bot has to be invited to it** — `chat:write` only posts where the bot is.
 
+**The applications.** The `Application` select offers the six QA tracks - `roarington.com`,
+`world.roarington.com`, `drive.roarington.com`, `staff.roarington.com`, `people.roarington.com`,
+`auth.roarington.com` - plus `Other`. `Other` exists so a bug in something unlisted can still be
+filed rather than filed against the wrong application; a wrong `app:` label is worse than a vague
+one. If `Other` starts appearing often, that is the signal to add whatever people are hitting.
+
+The list lives in `APPLICATIONS` in `src/types.ts`, and the keys in `config/leaders.example.json`
+have to match it after slugifying - a test enforces that, because a mismatch does not error, it
+just silently sends every escalation to the default triager instead of the application's leader.
+
 **Filing a bug.** `/bug` opens a form. **Eight fields are required** — summary, application,
 environment, device, steps, actual result, severity and frequency — and the rest are optional, so
 filing stays quick. That split is deliberate: the eight are what a developer cannot start without
