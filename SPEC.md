@@ -234,6 +234,14 @@ Also:
 - Make all of this **idempotent** — Jira retries webhooks, and duplicate DMs destroy trust in
   the bot faster than anything else.
 
+> **Amendment (Phase 0, decided).** Board 468 is a Kanban board, so there is no sprint to add
+> anything to and the Agile sprint/backlog endpoints in §3 do not apply. The `High` and `Highest`
+> rows become Kanban-native: set the status to `To Do`, apply `triaged:sprint` plus
+> `needs-lead-review` (High) or `escalated` (Highest), and send the leader DM / `#soft-world`
+> post exactly as described. The Slack side of the table is unchanged; only the Jira-side
+> destination changes. `triage_events.routed_to` keeps recording `'backlog'` vs `'sprint'` so the
+> §8 metrics still distinguish the two decisions.
+
 **Triage helper (nice-to-have inside Phase 3):** `/triage` posts an ephemeral list of all
 `Under Triage` bugs, each with buttons `Backlog`, `Sprint`, `Need info`, `Duplicate`. Buttons set
 the priority + transition through the same routing code path, so there is exactly one
@@ -263,16 +271,19 @@ implementation of the rules.
    project, or a separate dev project? If separate, we need to decide between moving the issue
    (heavy, loses history) or keeping it in place and adding it to a board whose filter spans both
    projects. Leaning towards the latter.
-   → *Partly resolved: only `SUP` and board `468` are in scope; other projects untouched. But
-   board 468 is Kanban and has no sprints, so the "active sprint" destination in §7 still needs
-   a decision — a Scrum board elsewhere, or a Kanban-native replacement. Open, Phase 3.*
+   → *Resolved: only `SUP` and board `468` are in scope; other projects untouched. Board 468 is
+   Kanban and has no sprints, and the decision is to go Kanban-native rather than reach for a
+   Scrum board elsewhere — see the amendment to §7 below. No cross-project board, no issue
+   moving.*
 2. **Who is "team leader"** per application? Config shape for
    `app → leader Slack ID + Jira accountId`. → *`config/leaders.example.json`, values pending.*
 3. **Can we create Jira custom fields**, or should everything live in labels + description?
    Assume labels + description for v1 (no admin needed) and make custom fields optional config.
    → *Resolved: labels + description. Verified sufficient.*
 4. **Which channels may run `/bug`** — anywhere, or an allowlist?
-   → *Defaulting to an allowlist of `#soft-world` + `#roarington-dev`; confirm before Phase 1.*
+   → *Resolved: allowlist of `#soft-world` + `#roarington-dev`, via
+   `SLACK_BUG_CHANNEL_ALLOWLIST`. `/bug` elsewhere gets an ephemeral reply pointing the reporter
+   at those channels.*
 5. **Hosting** — VPS or a PaaS? Affects secrets handling and the SQLite backup story.
    → *Resolved: Fly.io.*
 6. Should triage stay fully manual (tester sets priority, bot only moves things), or is there

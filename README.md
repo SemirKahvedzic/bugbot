@@ -62,13 +62,18 @@ To Do | Under Triage | In Progress | Cannot Reproduce | Rejected | Duplicate | R
 So `Under Triage` is a real status with its own column, and every terminal status SPEC 7 routes
 to exists. Intake (SPEC 5) and the exit-from-triage trigger (SPEC 7) work as written.
 
-**Board 468 is a Kanban board, so it has no sprints.** SPEC 7 routes `High` and `Highest` into
-"the active sprint of the dev board", which is impossible here — a Kanban board has no sprint to
-add to. Phase 3 needs a decision before it can implement that row of the routing table; until
-then the code path falls back to the backlog with a `needs-sprint` label, which is the SPEC 7
-"no active sprint" behaviour. The options are: point sprint routing at a Scrum board in another
-project, or replace it with something Kanban-native (a board column, or a `triaged:sprint` label
-plus the leader DM, dropping the sprint mechanics).
+**Board 468 is a Kanban board, so it has no sprints — and routing goes Kanban-native.** SPEC 7
+originally routed `High` and `Highest` into "the active sprint of the dev board", which is
+impossible on a Kanban board. Decided in Phase 0: drop the sprint mechanics rather than reach for
+a Scrum board in another project. `High` and `Highest` set the status to `To Do` and apply
+`triaged:sprint` plus `needs-lead-review` or `escalated`; the leader DM and the `#soft-world`
+post are unchanged. Only the Jira-side destination changed, and `triage_events.routed_to` still
+records `backlog` vs `sprint` so the metrics keep distinguishing the two decisions.
+
+The practical upshot: **BugBot needs no Agile API at all.** `src/jira/agile.ts` from the SPEC 10
+layout is not needed, and neither are `POST /rest/agile/1.0/sprint/{id}/issue` or
+`POST /rest/agile/1.0/backlog/issue`. `npm run discover` still reports boards and sprints,
+because knowing the board is Kanban is exactly what made this decision.
 
 **Caveat on `Finding`:** it sits at `hierarchyLevel: 1`, the same level as an epic. On a
 company-managed board, epic-level issues can render in the Epics panel rather than as cards in
