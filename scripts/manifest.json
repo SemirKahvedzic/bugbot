@@ -1,0 +1,86 @@
+{
+  "_comment": "Slack app manifest for BugBot. Create the app at https://api.slack.com/apps -> Create New App -> From an app manifest, paste this, then replace every REPLACE_WITH_PUBLIC_HOST occurrence with the real host (https://bugbot.fly.dev for the Fly deploy, or the ngrok HTTPS URL for local development). README.md explains why each scope is needed.",
+  "display_information": {
+    "name": "BugBot",
+    "description": "Guided bug intake and triage for Roarington QA",
+    "background_color": "#1d1d20",
+    "long_description": "BugBot turns a Slack message into a properly structured Jira bug. /bug opens a form that requires the fields QA actually needs (app, environment, device, OS, browser, viewport, input method, steps, expected vs actual, severity, frequency), files the issue in Jira, and keeps the reporter informed as it moves through triage. It complements the official Jira Cloud for Slack app rather than replacing it."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "BugBot",
+      "always_online": true
+    },
+    "app_home": {
+      "home_tab_enabled": true,
+      "messages_tab_enabled": true,
+      "messages_tab_read_only_enabled": true
+    },
+    "slash_commands": [
+      {
+        "command": "/bug",
+        "url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+        "description": "Report a bug with the guided QA form",
+        "usage_hint": "[short summary]",
+        "should_escape": false
+      },
+      {
+        "command": "/mybugs",
+        "url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+        "description": "Show the status of bugs you reported",
+        "should_escape": false
+      },
+      {
+        "command": "/triage",
+        "url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+        "description": "List bugs awaiting triage, with routing buttons (QA only)",
+        "should_escape": false
+      },
+      {
+        "command": "/bugstats",
+        "url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+        "description": "Weekly bug intake and triage summary",
+        "should_escape": false
+      }
+    ],
+    "shortcuts": [
+      {
+        "name": "Report as bug",
+        "type": "message",
+        "callback_id": "report_as_bug",
+        "description": "Open the bug form prefilled from this message"
+      }
+    ]
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "commands",
+        "chat:write",
+        "users:read",
+        "users:read.email",
+        "files:read",
+        "reactions:write",
+        "im:write",
+        "channels:history"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events",
+      "bot_events": [
+        "app_home_opened",
+        "message.channels",
+        "file_shared"
+      ]
+    },
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://REPLACE_WITH_PUBLIC_HOST/slack/events"
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}

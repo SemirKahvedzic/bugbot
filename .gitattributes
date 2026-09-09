@@ -1,0 +1,4 @@
+# Keep the repo LF everywhere; the Docker image is Linux.
+* text=auto eol=lf
+*.png binary
+*.db binary

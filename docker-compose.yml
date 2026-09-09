@@ -1,0 +1,25 @@
+# Local/VPS run. `docker compose up --build` then curl localhost:3000/healthz
+services:
+  bugbot:
+    build: .
+    image: bugbot:local
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Override .env so the DB lands on the mounted volume regardless of what
+      # DATABASE_PATH says for bare-metal runs.
+      DATABASE_PATH: /data/bugbot.db
+    ports:
+      - "3000:3000"
+    volumes:
+      - bugbot_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  bugbot_data:
