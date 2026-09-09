@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { applyRoute } from '../triage/apply.js';
 import { decideRoute } from '../triage/route.js';
 import { issueUrl } from '../format/slackBlocks.js';
+import { postBugFeed } from '../slack/feed.js';
 import type { BugbotContext } from '../context.js';
 import type { Priority } from '../types.js';
 
@@ -342,8 +343,11 @@ async function handleCreated(
   }
 
   const currentStatus = fields?.status?.name;
+  const alreadyInTriage =
+    currentStatus?.trim().toLowerCase() === config.JIRA_STATUS_TRIAGE.trim().toLowerCase();
+
   let moved = false;
-  if (currentStatus?.trim().toLowerCase() !== config.JIRA_STATUS_TRIAGE.trim().toLowerCase()) {
+  if (!alreadyInTriage) {
     moved = await issues.transitionTo(issueKey, config.JIRA_STATUS_TRIAGE);
     if (!moved) {
       log.warn(
@@ -352,6 +356,25 @@ async function handleCreated(
       );
     }
   }
+
+  // Same feed as the Slack path, so the channel shows the whole intake rather
+  // than only the half that came through the form (SPEC 1, "a single funnel").
+  await postBugFeed(context, {
+    issueKey,
+    summary: fields?.summary ?? issueKey,
+    source: 'jira_native',
+    // Where it actually is, not where we hoped to put it.
+    ...(alreadyInTriage || moved
+      ? { status: config.JIRA_STATUS_TRIAGE }
+      : currentStatus
+        ? { status: currentStatus }
+        : {}),
+    ...(fields?.priority?.name ? { priority: fields.priority.name } : {}),
+    // Read after the label write above, so `src:jira` is included.
+    labels: [...(fields?.labels ?? []), 'src:jira'],
+    ...(slackUserId ? { reporterSlackId: slackUserId } : {}),
+    ...(fields?.reporter?.displayName ? { reporterName: fields.reporter.displayName } : {}),
+  });
 
   log.info({ issueKey, slackUserId: Boolean(slackUserId), moved }, 'funnelled a Jira-native bug');
   return { action: 'created', issueKey };

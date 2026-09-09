@@ -81,6 +81,14 @@ export const configSchema = z.object({
   SLACK_DEFAULT_TRIAGER: z.string().min(1),
   SLACK_ANNOUNCE_CHANNEL: z.string().min(1),
   SLACK_DEV_CHANNEL: z.string().min(1),
+  /**
+   * Feed channel: every new bug is posted here, whichever way it arrived, so
+   * the team has one place that shows the whole intake. Distinct from
+   * SLACK_ANNOUNCE_CHANNEL, which only carries triage escalations.
+   *
+   * Unset disables the feed rather than failing - the bug is still filed.
+   */
+  SLACK_BUG_FEED_CHANNEL: z.string().min(1).optional(),
   SLACK_BUG_CHANNEL_ALLOWLIST: csv.default(''),
   ESCALATION_MENTION: z.enum(['none', 'here', 'channel']).default('none'),
 

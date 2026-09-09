@@ -548,6 +548,20 @@ To check it end to end: move a bug out of `Under Triage` in Jira and watch the l
 
 ## What it does, end to end
 
+**The bug feed.** Every new bug is posted as a card to `SLACK_BUG_FEED_CHANNEL`, whichever way it
+arrived — through the Slack form, or created straight in Jira. That channel is the visible half of
+the single funnel: one place showing the complete intake.
+
+A bug filed through the form shows its whole environment — app, environment, device and model, OS,
+browser, viewport, input method, severity, frequency, expected versus actual. A bug filed in Jira
+without the form shows whatever its labels carry and then says plainly that the QA fields are
+missing, because making that gap visible is the point of having a single funnel at all. Both
+render through one function, so the feed reads the same either way, and posting is claimed per
+issue so a redelivered webhook cannot produce a second card.
+
+It is a different channel from `SLACK_ANNOUNCE_CHANNEL`, which only carries triage escalations.
+**The bot has to be invited to it** — `chat:write` only posts where the bot is.
+
 **Filing a bug.** `/bug` in `#soft-world` opens a form that requires application, environment,
 device and model, OS, browser, viewport, input method, numbered steps, expected vs actual,
 frequency and severity. The submission is acknowledged inside Slack's three-second window; the
@@ -625,6 +639,7 @@ src/
     commands/mybugs.ts        /mybugs and the shared query
     commands/triage.ts        /triage, its buttons, the leader buttons
     commands/bugstats.ts      /bugstats
+    feed.ts                   the bug feed, used by both intake paths
     shortcuts/reportBug.ts    "Report as bug" message shortcut
     views/bugModal.ts         the form: pure builder + parser
   triage/

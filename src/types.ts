@@ -106,6 +106,26 @@ export function deviceClass(device: Device): string {
   }
 }
 
+/**
+ * Read the `key:value` labels back out.
+ *
+ * Labels are the only place SPEC 9.3 lets us store this without custom fields,
+ * so they are also the only thing a Jira webhook gives us to reconstruct what
+ * kind of bug it is. Both intake paths write them, so both can be rendered by
+ * the same code.
+ */
+export function parseLabels(labels: string[] | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const label of labels ?? []) {
+    const separator = label.indexOf(':');
+    if (separator <= 0) continue;
+    const key = label.slice(0, separator);
+    const value = label.slice(separator + 1);
+    if (key && value && !(key in out)) out[key] = value;
+  }
+  return out;
+}
+
 /** The SPEC 5 label set, in a stable order. */
 export function buildLabels(report: BugReport, priority: Priority): string[] {
   const sourceLabel = report.source === 'jira_native' ? 'src:jira' : 'src:slack';

@@ -5,7 +5,7 @@
 import type { AnyBlock, HomeView } from '@slack/types';
 import { ACTION } from '../slack/actions.js';
 import { summariseForSlack } from './description.js';
-import type { BugReport, Priority } from '../types.js';
+import { parseLabels, type BugReport, type IntakeSource, type Priority } from '../types.js';
 
 export function issueUrl(baseUrl: string, issueKey: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/browse/${issueKey}`;
@@ -55,6 +55,108 @@ export function intakeConfirmationBlocks(input: {
     section(
       ':camera_with_flash: *Reply in this thread with screenshots or a video* and I will attach ' +
         'them to the issue.',
+    ),
+  );
+
+  return blocks;
+}
+
+export interface BugFeedInput {
+  issueKey: string;
+  issueUrl: string;
+  summary: string;
+  status?: string;
+  priority?: string;
+  /** Jira labels; the only place the QA fields live (SPEC 9.3). */
+  labels?: string[];
+  reporterSlackId?: string;
+  reporterName?: string;
+  source: IntakeSource;
+  /** Present only when the bug came through the form. */
+  report?: BugReport;
+}
+
+/**
+ * The feed card: one message per new bug, whichever way it arrived.
+ *
+ * Both intake paths render through this so the feed is uniform. A bug filed in
+ * Jira without the form simply has less to show - and the card says so
+ * explicitly, because making that gap visible is the point of having a single
+ * funnel at all.
+ */
+export function bugFeedBlocks(input: BugFeedInput): AnyBlock[] {
+  const parsed = parseLabels(input.labels);
+
+  const how =
+    input.source === 'jira_native'
+      ? 'created directly in Jira'
+      : input.source === 'slack_shortcut'
+        ? 'via the "Report as bug" shortcut'
+        : 'via the /bug form';
+
+  const who = input.reporterSlackId
+    ? `<@${input.reporterSlackId}>`
+    : input.reporterName
+      ? escape(input.reporterName)
+      : 'unknown reporter';
+
+  // `who` is either a mention or already escaped, so it is joined as-is;
+  // everything else coming from Jira is escaped here.
+  const contextParts = [
+    input.priority ? escape(input.priority) : undefined,
+    input.status ? escape(input.status) : undefined,
+    how,
+    `reported by ${who}`,
+  ].filter((part): part is string => Boolean(part));
+
+  const blocks: AnyBlock[] = [
+    section(
+      `:beetle: *<${input.issueUrl}|${input.issueKey}>*  ${escape(truncate(input.summary, 150))}`,
+    ),
+    context(contextParts.join('  •  ')),
+  ];
+
+  const report = input.report;
+  if (report) {
+    const device = report.deviceModel
+      ? `${report.device} (${report.deviceModel})`
+      : report.device;
+
+    blocks.push(
+      section(
+        `*Environment*  ${escape(
+          [
+            report.application,
+            report.environment,
+            device,
+            report.os,
+            report.browser,
+            report.viewport,
+            report.inputMethods.join('/'),
+          ]
+            .filter(Boolean)
+            .join(' · '),
+        )}`,
+      ),
+      section(
+        `*Severity*  ${escape(report.severity)}, happens ${escape(report.frequency.toLowerCase())}\n` +
+          `*Expected*  ${escape(truncate(report.expected, 300))}\n` +
+          `*Actual*  ${escape(truncate(report.actual, 300))}`,
+      ),
+    );
+    return blocks;
+  }
+
+  // No form behind it. Show whatever the labels carry, then say what is missing.
+  const fromLabels = [parsed.app, parsed.env, parsed.dev, parsed.sev, parsed.freq].filter(Boolean);
+  if (fromLabels.length > 0) {
+    blocks.push(section(`*Labelled*  ${escape(fromLabels.join(' · '))}`));
+  }
+
+  blocks.push(
+    section(
+      ':warning: Filed without the QA form, so there is no device, viewport, steps or expected ' +
+        'versus actual. Ask the reporter for them, or point them at `/bug` next time.',
     ),
   );
 

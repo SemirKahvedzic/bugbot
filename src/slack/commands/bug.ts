@@ -11,6 +11,7 @@ import { renderDescription } from '../../format/description.js';
 import { intakeConfirmationBlocks, issueUrl } from '../../format/slackBlocks.js';
 import { allowedChannelMentions, channelAllowed, type BugbotContext } from '../../context.js';
 import { keepAlive } from '../../runtime.js';
+import { postBugFeed } from '../feed.js';
 import { COMMAND } from '../actions.js';
 import {
   BUG_MODAL_CALLBACK_ID,
@@ -132,6 +133,20 @@ export async function fileBug(
     await repo.setThread(issue.key, posted.channel, threadTs);
     await linkBackToSlack(context, { issueKey: issue.key, report, channel: posted.channel, threadTs });
   }
+
+  // The feed shows every new bug in one place, however it arrived.
+  await postBugFeed(context, {
+    issueKey: issue.key,
+    summary: report.summary,
+    source,
+    // Only claim the status when the move actually happened; otherwise omit
+    // it rather than showing a status the issue is not in.
+    ...(transitioned ? { status: config.JIRA_STATUS_TRIAGE } : {}),
+    priority,
+    reporterSlackId: input.slackUserId,
+    report,
+    ...(input.metadata.channelId ? { alreadyPostedIn: input.metadata.channelId } : {}),
+  });
 
   return { issueKey: issue.key };
 }
