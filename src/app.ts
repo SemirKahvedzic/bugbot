@@ -47,6 +47,17 @@ export interface BuiltApp {
  * verification needs (SPEC 11), and that failure mode is silent.
  */
 function mountHealthRoutes(app: Application, deps: { db?: Db; jira?: JiraClient }): void {
+  // Hitting the base URL should say what this is rather than 404. Also a
+  // useful canary: the root is the one path Vercel needs its own rewrite rule
+  // for, so if this stops answering, that rule has gone missing.
+  app.get('/', (_req, res) => {
+    res.status(200).json({
+      service: 'bugbot',
+      version: VERSION,
+      endpoints: ['/healthz', '/readyz', '/slack/events', '/jira/webhook/:secret'],
+    });
+  });
+
   app.get('/healthz', (_req, res) => {
     res.status(200).json({
       ok: true,
