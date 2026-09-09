@@ -483,12 +483,21 @@ Bring this table to whoever approves apps in the workspace.
 | `files:read` | Download screenshots posted in the confirmation thread, to attach to the issue | Screenshots stay in Slack, invisible to whoever fixes the bug |
 | `reactions:write` | React ✅ on a file once it is attached, so the reporter sees it worked | No feedback that a screenshot was picked up |
 | `im:write` | Open a DM channel to notify a reporter or the team leader | No status-change notifications |
-| `channels:history` | Detect files posted in a stored confirmation thread | Attachment sync cannot work |
+| `channels:history` | Detect files posted in a stored confirmation thread, in public channels | Attachment sync cannot work in public channels |
+| `groups:history` | The same, in private channels — `message.channels` fires only for public ones | Attachment sync silently does nothing in a private channel: no event is sent at all, so there is no error either |
 
-`channels:history` is the broadest of these. It is limited to public channels, the bot only
-receives events for channels it has been invited to, and BugBot ignores every message whose
+`channels:history` and `groups:history` are the broadest of these, and they come as a pair only
+because Slack splits message events by channel type: `message.channels` fires for public
+channels and `message.groups` for private ones. Subscribing to just one means attachment sync
+silently does nothing in the other kind — no event is sent, so there is no error to see either.
+That cost half an hour to find once already.
+
+Both are limited to channels the bot has been invited to, and BugBot ignores every message whose
 thread is not one it created — the check happens before anything is read or stored. Message text
 is never logged (see *Security*).
+
+If your bug channels are all public, you can drop `groups:history` and `message.groups` and keep
+the narrower set. Converting a private channel to public is the other way to get there.
 
 Nothing here needs `chat:write.public`, `groups:history`, `channels:read` or any user token.
 

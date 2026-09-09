@@ -61,7 +61,8 @@
         "files:read",
         "reactions:write",
         "im:write",
-        "channels:history"
+        "channels:history",
+        "groups:history"
       ]
     }
   },

@@ -61,7 +61,8 @@
         "files:read",
         "reactions:write",
         "im:write",
-        "channels:history"
+        "channels:history",
+        "groups:history"
       ]
     }
   },
@@ -70,7 +71,8 @@
       "request_url": "https://bugbot-eight.vercel.app/slack/events",
       "bot_events": [
         "app_home_opened",
-        "message.channels"
+        "message.channels",
+        "message.groups"
       ]
     },
     "interactivity": {
