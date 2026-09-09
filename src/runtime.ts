@@ -36,8 +36,15 @@ export function keepAlive(promise: Promise<unknown>, description: string): void 
     try {
       vercelWaitUntil(guarded);
       return;
-    } catch {
-      // Outside a request context waitUntil throws; fall through and let it run.
+    } catch (error) {
+      // Outside a request context waitUntil throws. The promise still runs,
+      // but on a serverless platform the invocation may be frozen before it
+      // finishes - so the work can vanish with no error anywhere. Say so
+      // loudly: silent loss is the worst failure this module can have.
+      logger().error(
+        { task: description, err: error instanceof Error ? error.message : String(error) },
+        'waitUntil unavailable on a serverless runtime - background work may be cut short',
+      );
     }
   }
 

@@ -67,7 +67,23 @@ export async function syncThreadFiles(
   const { repo, issues, notifier, log, config } = context;
 
   const report = await repo.findByThread(input.channelId, input.threadTs);
-  if (!report) return { attached: 0, skipped: 0 };
+  if (!report) {
+    // Most threaded files in a channel have nothing to do with a bug, so this
+    // is debug rather than info - but it must be logged, because "the thread
+    // was not one of ours" is the likeliest reason a sync silently does
+    // nothing, and without a line here there is no way to tell that apart from
+    // the event never arriving.
+    log.debug(
+      { channelId: input.channelId, threadTs: input.threadTs, files: input.files.length },
+      'file posted in a thread that is not a bug thread - ignoring',
+    );
+    return { attached: 0, skipped: 0 };
+  }
+
+  log.info(
+    { issueKey: report.issue_key, files: input.files.length },
+    'syncing files from a bug thread',
+  );
 
   const botToken = config.SLACK_BOT_TOKEN;
   if (!botToken) {
