@@ -45,23 +45,43 @@ first draft of `SPEC.md` §2 — these are the real ones:
 | Site | `roarington.atlassian.net` | Cloud |
 | Cloud ID | `57de5553-0941-4346-821f-c46f7dde06cc` | Confirmed via `/_edge/tenant_info` |
 | Project | `SUP` ("Support"), id `10396` | Company-managed (`style: classic`). **Not `SOFT`.** |
-| Board | `468` | SUP's board. Board `303` belongs to `SOFT`. |
+| Board | `468` "SUP board", **Kanban** | SUP's board. Board `303` belongs to `SOFT`. |
 | Issue type | `Finding`, id `10481` | **SUP has no `Bug` type.** See the caveat below. |
 | Priorities | `Highest`=1 `High`=2 `Medium`=3 `Low`=4 `Lowest`=5 | All five available; default `Medium` |
 | Create fields | `summary` `description` `labels` `priority` `attachment` `assignee` | Enough for SPEC 5/6 with no custom fields |
 
 Only SUP and board 468 are in scope. `SOFT`, `CARS` and `EMT` are untouched.
 
-**Caveat on `Finding`:** it sits at `hierarchyLevel: 1`, the same level as an epic. On a
-company-managed board, epic-level issues render in the Epics panel rather than as cards in the
-columns, so board 468 will not look like a conventional bug board. This was a deliberate choice
-to avoid needing a Jira admin. `JIRA_ISSUE_TYPE` is config, so switching to a standard-level
-type later is a one-line change plus a re-run of `npm run discover`.
+**The workflow is wired as designed.** Confirmed from the board on 2026-09-09. Board 468 has
+these columns, in this order:
 
-**Still to confirm:** whether the `Under Triage` / `Ready for Validation` / `Rejected` /
-`Duplicate` / `Cannot Reproduce` statuses are wired into SUP's `Finding` workflow. All five exist
-as statuses on the site, but SUP is empty so the workflow could not be read from an issue.
-`npm run discover` answers this — see *Reading the discovery report*.
+```
+To Do | Under Triage | In Progress | Cannot Reproduce | Rejected | Duplicate | Ready for Validation | Done
+```
+
+So `Under Triage` is a real status with its own column, and every terminal status SPEC 7 routes
+to exists. Intake (SPEC 5) and the exit-from-triage trigger (SPEC 7) work as written.
+
+**Board 468 is a Kanban board, so it has no sprints.** SPEC 7 routes `High` and `Highest` into
+"the active sprint of the dev board", which is impossible here — a Kanban board has no sprint to
+add to. Phase 3 needs a decision before it can implement that row of the routing table; until
+then the code path falls back to the backlog with a `needs-sprint` label, which is the SPEC 7
+"no active sprint" behaviour. The options are: point sprint routing at a Scrum board in another
+project, or replace it with something Kanban-native (a board column, or a `triaged:sprint` label
+plus the leader DM, dropping the sprint mechanics).
+
+**Caveat on `Finding`:** it sits at `hierarchyLevel: 1`, the same level as an epic. On a
+company-managed board, epic-level issues can render in the Epics panel rather than as cards in
+the columns. SUP is still empty, so whether `Finding` issues appear as ordinary cards on board
+468 is **unverified** — the first bug filed in Phase 1 settles it in one look. Using `Finding`
+was a deliberate choice to avoid needing a Jira admin; `JIRA_ISSUE_TYPE` is config, so switching
+to a standard-level type later is a one-line change plus a re-run of `npm run discover`.
+
+**Column order is worth a second look.** The three terminal statuses (`Cannot Reproduce`,
+`Rejected`, `Duplicate`) currently sit *between* `In Progress` and `Ready for Validation`. For a
+QA flow, `Ready for Validation` immediately after `In Progress` with the terminal columns at the
+far right reads better on a wall. Cosmetic, no code depends on column order — BugBot routes on
+status names, never on board position.
 
 ---
 
@@ -132,12 +152,11 @@ non-zero when there is at least one finding, so it doubles as a deploy pre-fligh
 Three findings matter more than the rest:
 
 - **"The `Finding` workflow is missing these statuses…"** — the designed triage statuses are not
-  actually wired into SUP. Either a Jira admin adds them to the workflow, or the `JIRA_STATUS_*`
-  variables get repointed at statuses that do exist. Phase 1 cannot be accepted until one of
-  those is true.
-- **"Board 468 is kanban, so it has no sprints at all"** — SPEC 7 routes High and Highest into
-  the active sprint. On a Kanban board that is impossible as written, and the choice becomes: use
-  a Scrum board, or replace sprint routing with a board column or a label. Decide before Phase 3.
+  wired into SUP after all. Either a Jira admin adds them to the workflow, or the `JIRA_STATUS_*`
+  variables get repointed at statuses that do exist. Not expected: the board confirms they are
+  there. If this one appears, something changed in Jira.
+- **"Board 468 is kanban, so it has no sprints at all"** — **expected, already known.** See
+  *The Jira environment, as verified* above for the options. Not a regression.
 - **"MODIFY_REPORTER is absent"** — set `JIRA_SET_REAL_REPORTER=false` or grant the permission.
 
 `discovery.json` is gitignored: it names accounts and project internals.

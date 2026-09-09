@@ -66,13 +66,16 @@ the routing logic and the per-reporter view — things the official app can't do
 | `#monitoring` | `C0B7G6HV873` | Not used by this service |
 | QA Slack user ID | `U08HVG0H2EL` | Default triager |
 
-> Corrected during Phase 0: project `SUP` (id `10396`), board `468`, issue type `Finding`
-> (id `10481`). See `README.md`.
+> Corrected during Phase 0: project `SUP` (id `10396`), board `468` — a **Kanban** board, so it
+> has no sprints — and issue type `Finding` (id `10481`). See `README.md`.
 
 Jira workflow statuses already designed for this project:
 `To Do` → `Under Triage` → `In Progress` → `Ready for Validation` → `Done`,
 plus terminal-ish `Rejected`, `Duplicate`, `Cannot Reproduce` (all mapped to the Done category),
 with return transitions back to `Under Triage`.
+
+> Confirmed during Phase 0: all of these exist and have columns on board 468. This part of §2
+> was accurate.
 
 **Add a discovery script** (`npm run discover`) that prints, for the configured site: cloud ID,
 project ID, issue type IDs, priority IDs, status IDs + transition IDs per status, board IDs,
@@ -260,7 +263,9 @@ implementation of the rules.
    project, or a separate dev project? If separate, we need to decide between moving the issue
    (heavy, loses history) or keeping it in place and adding it to a board whose filter spans both
    projects. Leaning towards the latter.
-   → *Resolved for now: only `SUP` and board `468` are in scope; other projects untouched.*
+   → *Partly resolved: only `SUP` and board `468` are in scope; other projects untouched. But
+   board 468 is Kanban and has no sprints, so the "active sprint" destination in §7 still needs
+   a decision — a Scrum board elsewhere, or a Kanban-native replacement. Open, Phase 3.*
 2. **Who is "team leader"** per application? Config shape for
    `app → leader Slack ID + Jira accountId`. → *`config/leaders.example.json`, values pending.*
 3. **Can we create Jira custom fields**, or should everything live in labels + description?
