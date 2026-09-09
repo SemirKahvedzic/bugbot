@@ -532,6 +532,17 @@ To check it end to end: move a bug out of `Under Triage` in Jira and watch the l
   project. A bad secret returns 404, not 403, so the path cannot be probed. On top of that, a
   loop guard drops any change made by the service account itself — without it BugBot would
   respond to its own writes.
+- **The loop guard does not apply to `issue_created`.** BugBot must ignore its own writes, or it
+  answers itself — but an actor check cannot tell "BugBot filed this" from "the human whose
+  account BugBot borrows filed this by hand", and while the service account is a personal one
+  that second case is most of the native intake. So creation uses a precise signal instead:
+  `fileBug` claims `created:<key>` the moment it files, and the webhook path skips any issue
+  already claimed. Updates still use the actor check, because BugBot's own transitions and label
+  writes genuinely must not be answered.
+
+  **This is the strongest argument for a dedicated service account.** With a personal one, every
+  triage that person performs by hand is also ignored, which disables SPEC 7 routing for the one
+  person most likely to be doing the triaging.
 - **The webhook secret appears in Vercel's request logs**, because Vercel logs the full request
   path and the secret is a path segment. Jira Cloud webhooks cannot send custom headers, so the
   path is the only place a shared secret can go. In practice log access and deploy access are

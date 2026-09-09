@@ -195,6 +195,49 @@ describe('handleWebhook guards (SPEC 11)', () => {
     expect(harness.posts).toHaveLength(0);
   });
 
+  it('does NOT ignore a creation by the service account', async () => {
+    // While the service account is a personal one, the person who files most
+    // bugs in Jira by hand IS the service account. An actor check cannot tell
+    // "BugBot filed this" from "Semir filed this", and getting it wrong here
+    // silently drops most of the native intake.
+    const result = await handleWebhook(
+      harness.context,
+      payload({
+        event: 'jira:issue_created',
+        key: 'SUP-60',
+        actorAccountId: SERVICE_ACCOUNT_ID,
+        status: 'To Do',
+      }),
+    );
+
+    expect(result.action).toBe('created');
+    expect(await harness.repo.getIssueReport('SUP-60')).toBeDefined();
+  });
+
+  it('skips a creation BugBot already claimed, which is how its own filings are excluded', async () => {
+    // fileBug claims this the moment it files, so the webhook finds it taken.
+    expect(await harness.repo.claimNotification('created:SUP-61')).toBe(true);
+
+    const result = await handleWebhook(
+      harness.context,
+      payload({ event: 'jira:issue_created', key: 'SUP-61', status: 'To Do' }),
+    );
+
+    expect(result.action).toBe('ignored_duplicate');
+    expect(harness.jiraCalls).toHaveLength(0);
+    expect(harness.posts).toHaveLength(0);
+  });
+
+  it('still ignores an UPDATE made by the service account', async () => {
+    // The loop guard still matters here: BugBot's own transitions and label
+    // writes produce update webhooks it must not answer.
+    const result = await handleWebhook(
+      harness.context,
+      payload({ actorAccountId: SERVICE_ACCOUNT_ID, from: 'Under Triage', to: 'To Do' }),
+    );
+    expect(result.action).toBe('ignored_self');
+  });
+
   it('ignores a different issue type', async () => {
     const result = await handleWebhook(
       harness.context,

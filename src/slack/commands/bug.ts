@@ -95,6 +95,12 @@ export async function fileBug(
     intakeSource: source,
   });
 
+  // Claim the creation before Jira's own `issue_created` webhook can, so the
+  // native-intake path skips this issue. This, rather than an actor check, is
+  // what stops BugBot funnelling its own creations - the actor check cannot
+  // tell BugBot apart from the human whose account it borrows.
+  await repo.claimNotification(`created:${issue.key}`);
+
   log.info(
     {
       issueKey: issue.key,

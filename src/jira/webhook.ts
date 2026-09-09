@@ -204,7 +204,20 @@ export async function handleWebhook(
   }
 
   // 2. Loop guard: our own writes trigger webhooks too.
-  if (payload.user?.accountId && payload.user.accountId === serviceAccount.accountId) {
+  //
+  // Deliberately not applied to issue_created. The actor check cannot tell
+  // "BugBot filed this" from "the human whose account BugBot borrows filed
+  // this by hand" - and while the service account is a personal one, that is
+  // most of the native intake. Creation has a precise signal instead: fileBug
+  // claims `created:<key>` the moment it files, so handleCreated finds the
+  // claim taken and skips. No actor guesswork, and it works whoever the
+  // service account turns out to be.
+  const isCreation = payload.webhookEvent === 'jira:issue_created';
+  if (
+    !isCreation &&
+    payload.user?.accountId &&
+    payload.user.accountId === serviceAccount.accountId
+  ) {
     log.debug({ issueKey }, 'change made by the service account - ignoring');
     return { action: 'ignored_self', issueKey };
   }
@@ -217,7 +230,7 @@ export async function handleWebhook(
 
   const changeId = changeIdFor(payload);
 
-  if (payload.webhookEvent === 'jira:issue_created') {
+  if (isCreation) {
     return handleCreated(context, payload, issueKey);
   }
 

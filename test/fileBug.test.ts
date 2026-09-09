@@ -61,6 +61,19 @@ describe('fileBug: the happy path', () => {
     expect(confirmation?.text).toMatch(/screenshots or a video/i);
   });
 
+  it('claims the creation so Jira\'s own webhook does not funnel it again', async () => {
+    await fileBug(harness.context, {
+      report: formFields,
+      metadata: { channelId: 'C_BUGS', source: 'slack_modal' },
+      slackUserId: 'U_REPORTER',
+    });
+
+    // Already claimed means the webhook path will skip this issue. This is
+    // what replaces the actor check, which cannot tell BugBot apart from the
+    // human whose account it borrows.
+    expect(await harness.repo.claimNotification('created:SUP-100')).toBe(false);
+  });
+
   it('sends the confirmation to the reporter when there is no channel', async () => {
     await fileBug(harness.context, {
       report: formFields,
