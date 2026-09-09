@@ -422,20 +422,23 @@ snapshot. Nothing in this repo needs a backup script.
 
 ## Slack app setup
 
-`scripts/manifest.json` is a complete app manifest, already pointing at
-`https://bugbot-eight.vercel.app/slack/events`. For local development, replace that host with
-your ngrok host throughout.
+There are two manifests, and the difference matters:
+
+- **`scripts/manifest.create.json`** — paste this one to create the app. It is the full manifest
+  minus the `event_subscriptions` block, because Slack challenge-verifies that request URL the
+  moment you submit, and `/slack/events` cannot answer until the signing secret exists and the
+  app has been redeployed. Chicken and egg; omitting the block avoids it entirely. Events get
+  added in step 5, once the endpoint is live.
+- **`scripts/manifest.json`** — the complete desired state, for re-creating or auditing the app
+  later, when the endpoint is already up and the events URL verifies on the spot.
+
+Both point at `https://bugbot-eight.vercel.app/slack/events`. For local development, replace that
+host with your ngrok host throughout.
 
 Do it in this order — the middle steps are not optional and the ordering is not arbitrary:
 
 1. **Create the app.** <https://api.slack.com/apps> → **Create New App** → **From a manifest** →
-   pick the Roarington workspace → paste `scripts/manifest.json`.
-
-   Slack verifies the **Event Subscriptions** request URL with a challenge request at this point,
-   and `/slack/events` is not mounted until the signing secret exists — so this step can fail on
-   that one field. If it does, delete `settings.event_subscriptions.request_url` from the pasted
-   manifest, create the app without it, and add the URL in step 5. Slash-command and
-   interactivity URLs are not challenge-verified, so they can stay.
+   pick the Roarington workspace → paste `scripts/manifest.create.json`.
 
 2. **Install to the workspace.** Settings → **Install App** → Install. If the workspace requires
    admin approval for apps, this is where it is requested; the scope table below is what to send
@@ -454,9 +457,10 @@ Do it in this order — the middle steps are not optional and the ordering is no
    and rejecting an unsigned request, which is what you want. A 404 means the redeploy has not
    landed.
 
-5. **Add the Event Subscriptions URL** if step 1 could not. Features → Event Subscriptions →
-   Enable Events → paste `https://bugbot-eight.vercel.app/slack/events`. It verifies immediately
-   now that the endpoint is live. Subscribe to `app_home_opened` and `message.channels`.
+5. **Add Event Subscriptions.** Features → Event Subscriptions → Enable Events → paste
+   `https://bugbot-eight.vercel.app/slack/events`. It verifies immediately now that the endpoint
+   is live. Then under **Subscribe to bot events** add `app_home_opened` and `message.channels`,
+   and save. Slack will prompt to reinstall the app; accept.
 
 6. **Invite the bot to the channels.** In Slack: `/invite @BugBot` in `#soft-world` and
    `#roarington-dev`. This is easy to forget and nothing works without it: `chat:write` only
