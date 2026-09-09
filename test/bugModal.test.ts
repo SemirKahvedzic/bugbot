@@ -66,11 +66,44 @@ describe('buildBugModal', () => {
     }
   });
 
-  it('makes only the device model and notes optional', () => {
+  it('requires exactly the eight fields a bug cannot be worked without', () => {
+    // Filing has to be quick, so only these are mandatory: enough to
+    // reproduce, plus what the SPEC 6 priority matrix needs.
+    const required = view.blocks
+      .filter((block) => block.type === 'input')
+      .filter((block) => (block as { optional?: boolean }).optional !== true)
+      .map((block) => (block as { block_id?: string }).block_id);
+
+    expect(required.sort()).toEqual(
+      [
+        FIELD.summary,
+        FIELD.application,
+        FIELD.environment,
+        FIELD.device,
+        FIELD.steps,
+        FIELD.actual,
+        FIELD.frequency,
+        FIELD.severity,
+      ].sort(),
+    );
+  });
+
+  it('marks the rest optional', () => {
     const optional = view.blocks
       .filter((block) => (block as { optional?: boolean }).optional === true)
       .map((block) => (block as { block_id?: string }).block_id);
-    expect(optional.sort()).toEqual([FIELD.deviceModel, FIELD.notes].sort());
+
+    expect(optional.sort()).toEqual(
+      [
+        FIELD.deviceModel,
+        FIELD.os,
+        FIELD.browser,
+        FIELD.viewport,
+        FIELD.inputMethods,
+        FIELD.expected,
+        FIELD.notes,
+      ].sort(),
+    );
   });
 
   it('offers exactly the configured options, so the parser cannot drift', () => {
@@ -175,20 +208,51 @@ describe('parseBugModalSubmission', () => {
     if (!result.ok) expect(result.errors[FIELD.application]).toBeDefined();
   });
 
-  it('requires at least one input method', () => {
+  it('accepts a submission with only the eight required fields', () => {
     const result = parseBugModalSubmission(
-      submission({ [FIELD.inputMethods]: { selected_options: [] } }),
+      submission({
+        [FIELD.deviceModel]: { value: '' },
+        [FIELD.os]: { value: '' },
+        [FIELD.browser]: { value: '' },
+        [FIELD.viewport]: { value: '' },
+        [FIELD.inputMethods]: { selected_options: [] },
+        [FIELD.expected]: { value: '' },
+        [FIELD.notes]: { value: '' },
+      }),
     );
-    expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.errors[FIELD.inputMethods]).toMatch(/at least one/i);
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // Absent rather than empty strings, so every renderer can just test truthiness.
+    expect(result.report.os).toBeUndefined();
+    expect(result.report.browser).toBeUndefined();
+    expect(result.report.viewport).toBeUndefined();
+    expect(result.report.inputMethods).toBeUndefined();
+    expect(result.report.expected).toBeUndefined();
+    expect(result.report.summary).toBe('Brake lights lag');
+    expect(result.report.actual).toBe('Lights late');
   });
 
-  it.each([FIELD.steps, FIELD.expected, FIELD.actual, FIELD.os, FIELD.browser])(
-    'requires %s',
+  it('accepts an empty viewport but still rejects a malformed one', () => {
+    // A malformed viewport is worse than none: it looks like data.
+    expect(parseBugModalSubmission(submission({ [FIELD.viewport]: { value: '' } })).ok).toBe(true);
+
+    const bad = parseBugModalSubmission(submission({ [FIELD.viewport]: { value: 'huge' } }));
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(bad.errors[FIELD.viewport]).toMatch(/1440x900/);
+  });
+
+  it.each([FIELD.steps, FIELD.actual])('requires %s', (field) => {
+    const result = parseBugModalSubmission(submission({ [field]: { value: '   ' } }));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.errors[field]).toBeDefined();
+  });
+
+  it.each([FIELD.os, FIELD.browser, FIELD.expected, FIELD.deviceModel, FIELD.notes])(
+    'does not require %s',
     (field) => {
-      const result = parseBugModalSubmission(submission({ [field]: { value: '   ' } }));
-      expect(result.ok).toBe(false);
-      if (!result.ok) expect(result.errors[field]).toBeDefined();
+      expect(parseBugModalSubmission(submission({ [field]: { value: '   ' } })).ok).toBe(true);
     },
   );
 
@@ -205,6 +269,15 @@ describe('parseBugModalSubmission', () => {
     expect(Object.keys(result.errors).sort()).toEqual(
       [FIELD.summary, FIELD.viewport, FIELD.steps].sort(),
     );
+  });
+
+  it('still rejects an option that is not in our list', () => {
+    // Optional means "may be blank", not "may be anything".
+    const result = parseBugModalSubmission(
+      submission({ [FIELD.inputMethods]: { selected_options: [{ value: 'Telepathy' }] } }),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.report.inputMethods).toBeUndefined();
   });
 
   it('survives malformed private_metadata instead of losing the report', () => {

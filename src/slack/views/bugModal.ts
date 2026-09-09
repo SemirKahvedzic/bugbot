@@ -157,18 +157,22 @@ export function buildBugModal(
     }),
     textInput(FIELD.os, 'OS and version', {
       placeholder: 'e.g. Android 15, iOS 18.2, Windows 11',
+      optional: true,
     }),
     textInput(FIELD.browser, 'Browser and version', {
       placeholder: 'e.g. Chrome 141',
+      optional: true,
     }),
     textInput(FIELD.viewport, 'Viewport size', {
       placeholder: '1440x900',
       hint: 'Window size in px, not screen size. In the browser console: innerWidth x innerHeight.',
+      optional: true,
     }),
     {
       type: 'input',
       block_id: FIELD.inputMethods,
       label: { type: 'plain_text', text: 'Input method' },
+      optional: true,
       element: {
         type: 'multi_static_select',
         action_id: actionId(FIELD.inputMethods),
@@ -185,6 +189,7 @@ export function buildBugModal(
     textInput(FIELD.expected, 'Expected result', {
       multiline: true,
       placeholder: 'What should have happened?',
+      optional: true,
     }),
     textInput(FIELD.actual, 'Actual result', {
       multiline: true,
@@ -270,9 +275,11 @@ export function parseBugModalSubmission(view: SubmittedView): ParseResult {
     errors[FIELD.summary] = `Keep it under ${SUMMARY_MAX_LENGTH} characters.`;
   }
 
+  // Optional now, but still validated when given: a malformed viewport is
+  // worse than none, because it looks like data.
   const rawViewport = str(view, FIELD.viewport);
-  const viewportMatch = VIEWPORT_PATTERN.exec(rawViewport);
-  if (!viewportMatch) {
+  const viewportMatch = rawViewport.length > 0 ? VIEWPORT_PATTERN.exec(rawViewport) : null;
+  if (rawViewport.length > 0 && !viewportMatch) {
     errors[FIELD.viewport] =
       'Use width x height in pixels, e.g. 1440x900. This is the window size, not the screen size.';
   }
@@ -305,24 +312,16 @@ export function parseBugModalSubmission(view: SubmittedView): ParseResult {
   const inputMethods = multi(view, FIELD.inputMethods).filter((value): value is InputMethod =>
     INPUT_METHODS.includes(value as InputMethod),
   );
-  if (inputMethods.length === 0) {
-    errors[FIELD.inputMethods] = 'Pick at least one input method.';
-  }
 
   const steps = str(view, FIELD.steps);
   if (steps.length === 0) errors[FIELD.steps] = 'Steps to reproduce are the whole point.';
 
-  const expected = str(view, FIELD.expected);
-  if (expected.length === 0) errors[FIELD.expected] = 'What should have happened?';
-
   const actual = str(view, FIELD.actual);
   if (actual.length === 0) errors[FIELD.actual] = 'What happened instead?';
 
+  const expected = str(view, FIELD.expected);
   const os = str(view, FIELD.os);
-  if (os.length === 0) errors[FIELD.os] = 'OS and version, e.g. Windows 11.';
-
   const browser = str(view, FIELD.browser);
-  if (browser.length === 0) errors[FIELD.browser] = 'Browser and version, e.g. Chrome 141.';
 
   if (Object.keys(errors).length > 0) return { ok: false, errors };
 
@@ -338,13 +337,13 @@ export function parseBugModalSubmission(view: SubmittedView): ParseResult {
       environment: environment as Environment,
       device: device as Device,
       ...(deviceModel ? { deviceModel } : {}),
-      os,
-      browser,
+      ...(os ? { os } : {}),
+      ...(browser ? { browser } : {}),
       // Normalised, so "1440 x 900" and "1440x900" end up identical in Jira.
-      viewport: `${viewportMatch![1]}x${viewportMatch![2]}`,
-      inputMethods,
+      ...(viewportMatch ? { viewport: `${viewportMatch[1]}x${viewportMatch[2]}` } : {}),
+      ...(inputMethods.length > 0 ? { inputMethods } : {}),
       steps,
-      expected,
+      ...(expected ? { expected } : {}),
       actual,
       frequency: frequency as Frequency,
       severity: severity as Severity,

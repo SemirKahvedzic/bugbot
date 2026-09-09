@@ -232,16 +232,62 @@ describe('bugFeedBlocks: the card layout', () => {
     // Slack rejects a section with more than ten fields.
     expect(grid!.fields.length).toBeLessThanOrEqual(10);
     const labels = grid!.fields.map((f) => f.text.split('\n')[0]);
+    // The four guaranteed fields come first, then whatever optional ones the
+    // reporter actually filled in.
     expect(labels).toEqual([
       '*Application*',
       '*Environment*',
       '*Device*',
+      '*Severity*',
       '*OS*',
       '*Browser*',
       '*Viewport*',
       '*Input*',
+    ]);
+  });
+
+  it('drops the optional fields that were left blank', () => {
+    const sparse = bugFeedBlocks({
+      issueKey: 'SUP-40',
+      issueUrl: 'x',
+      summary: 'a',
+      source: 'slack_modal',
+      report: {
+        summary: 'a',
+        application: 'world.roarington.com',
+        environment: 'Production',
+        device: 'Desktop',
+        steps: '1. do it',
+        actual: 'it broke',
+        frequency: 'Always',
+        severity: 'Major',
+        reporter: {},
+        source: 'slack_modal',
+      },
+    });
+
+    const grid = sparse.find((block) => block.type === 'section' && 'fields' in block) as
+      | { fields: Array<{ text: string }> }
+      | undefined;
+
+    expect(grid!.fields.map((f) => f.text.split('\n')[0])).toEqual([
+      '*Application*',
+      '*Environment*',
+      '*Device*',
       '*Severity*',
     ]);
+
+    // And it says what is missing rather than letting it pass unnoticed.
+    const text = json(sparse);
+    expect(text).toContain('not provided');
+    expect(text).toContain('OS');
+    expect(text).toContain('viewport');
+    expect(text).toContain('expected result');
+    // Desktop, so the device model is not something to chase.
+    expect(text).not.toContain('device model');
+    // No Expected heading when there is no expected result.
+    expect(text).not.toContain('*Expected*');
+    expect(text).toContain('*Actual*');
   });
 
   it('carries an Open in Jira button', () => {

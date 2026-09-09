@@ -141,6 +141,78 @@ describe('renderDescription', () => {
   });
 });
 
+describe('renderDescription with only the required fields', () => {
+  const sparse: BugReport = {
+    summary: 'Camera clips through the wall',
+    application: 'world.roarington.com',
+    environment: 'Production',
+    device: 'Phone',
+    steps: '1. Drive into the wall',
+    actual: 'The camera goes through it',
+    frequency: 'Sometimes',
+    severity: 'Minor',
+    reporter: { displayName: 'Semir' },
+    source: 'slack_modal',
+  };
+
+  it('omits the bullets that were not filled in, rather than showing blanks', () => {
+    const { adf } = renderDescription(sparse);
+    const text = allText(adf).join('\n');
+
+    expect(text).toContain('Application: ');
+    expect(text).toContain('Device: ');
+    expect(text).not.toContain('OS: ');
+    expect(text).not.toContain('Browser: ');
+    expect(text).not.toContain('Viewport: ');
+    expect(text).not.toContain('Input method: ');
+  });
+
+  it('drops the Expected heading entirely when there is no expected result', () => {
+    const { adf } = renderDescription(sparse);
+    const headings = adf.content
+      .filter((node) => node.type === 'heading')
+      .flatMap((node) => allText(node));
+
+    expect(headings).toEqual([
+      'Environment',
+      'Steps to reproduce',
+      'Actual result',
+      'Reproduction',
+    ]);
+  });
+
+  it('names what was not provided, so the reader knows what to ask for', () => {
+    const text = allText(renderDescription(sparse).adf).join(' ');
+
+    expect(text).toContain('Not provided:');
+    expect(text).toContain('OS');
+    expect(text).toContain('browser');
+    expect(text).toContain('viewport');
+    expect(text).toContain('input method');
+    expect(text).toContain('expected result');
+    // A phone with no model given is worth chasing.
+    expect(text).toContain('device model');
+  });
+
+  it('says nothing about missing fields when the form was filled in', () => {
+    expect(allText(renderDescription(baseReport).adf).join(' ')).not.toContain('Not provided:');
+  });
+
+  it('does not chase a device model where it would not help', () => {
+    const desktop = allText(
+      renderDescription({ ...sparse, device: 'Desktop' }).adf,
+    ).join(' ');
+    expect(desktop).not.toContain('device model');
+    // The rest is still listed.
+    expect(desktop).toContain('viewport');
+  });
+
+  it('still suggests a priority, because severity and frequency stay required', () => {
+    const { priority } = renderDescription(sparse);
+    expect(priority).toBe('Low'); // Minor x Sometimes
+  });
+});
+
 describe('adf helpers', () => {
   it('splits multi-line text into one paragraph per line', () => {
     const nodes = paragraphs('first\n\nsecond\nthird');

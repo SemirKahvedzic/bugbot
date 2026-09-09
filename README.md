@@ -591,9 +591,20 @@ issue so a redelivered webhook cannot produce a second card.
 It is a different channel from `SLACK_ANNOUNCE_CHANNEL`, which only carries triage escalations.
 **The bot has to be invited to it** — `chat:write` only posts where the bot is.
 
-**Filing a bug.** `/bug` in `#soft-world` opens a form that requires application, environment,
-device and model, OS, browser, viewport, input method, numbered steps, expected vs actual,
-frequency and severity. The submission is acknowledged inside Slack's three-second window; the
+**Filing a bug.** `/bug` opens a form. **Eight fields are required** — summary, application,
+environment, device, steps, actual result, severity and frequency — and the rest are optional, so
+filing stays quick. That split is deliberate: the eight are what a developer cannot start without
+plus what triage cannot decide without, and severity and frequency in particular feed the SPEC 6
+priority matrix.
+
+Making the others optional would quietly undo the point of having a form, so what it costs is
+tracked rather than hidden. `missingFields` in `src/types.ts` lists what was left out, the Jira
+description ends with *"Not provided: OS, browser, viewport…"*, and the Slack feed card says the
+same. The device model is only chased on a phone, tablet or console, where "Phone" alone is rarely
+enough. Empty fields are dropped from the rendering rather than shown blank.
+
+A viewport that is left empty is accepted; a malformed one is still rejected, because it looks
+like data. The submission is acknowledged inside Slack's three-second window; the
 Jira work happens after. The issue is created, moved to `Under Triage`, given a normalised ADF
 description, labelled, and assigned a suggested priority from severity × frequency. A
 confirmation lands in the channel with the issue key and an invitation to post screenshots in the

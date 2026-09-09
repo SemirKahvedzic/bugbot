@@ -23,7 +23,7 @@ import {
   type AdfNode,
 } from './adf.js';
 import { explainSuggestion, suggestPriority } from '../triage/suggest.js';
-import type { BugReport, Priority } from '../types.js';
+import { missingFields, type BugReport, type Priority } from '../types.js';
 
 /** "Application: world.roarington.com" as a bold-labelled bullet. */
 function field(label: string, value: string, asCode = false): AdfNode {
@@ -35,15 +35,22 @@ function environmentBullets(report: BugReport): AdfNode {
     ? `${report.device} - ${report.deviceModel}`
     : report.device;
 
-  return bulletList([
+  // Only five of these are required, so a bullet is dropped rather than left
+  // showing a blank. What was dropped is reported by the footer instead.
+  const bullets: AdfNode[] = [
     field('Application', report.application),
     field('Environment', report.environment),
     field('Device', device),
-    field('OS', report.os),
-    field('Browser', report.browser),
-    field('Viewport', report.viewport, true),
-    field('Input method', report.inputMethods.join(', ') || '-'),
-  ]);
+  ];
+
+  if (report.os) bullets.push(field('OS', report.os));
+  if (report.browser) bullets.push(field('Browser', report.browser));
+  if (report.viewport) bullets.push(field('Viewport', report.viewport, true));
+  if (report.inputMethods?.length) {
+    bullets.push(field('Input method', report.inputMethods.join(', ')));
+  }
+
+  return bulletList(bullets);
 }
 
 function reproductionBullets(report: BugReport): AdfNode {
@@ -53,11 +60,6 @@ function reproductionBullets(report: BugReport): AdfNode {
   ]);
 }
 
-/**
- * Provenance footer. The human reporter is recorded here as well as in the
- * database, because SPEC 4 files everything under one service account - without
- * this line a reader cannot tell who actually hit the bug.
- */
 /**
  * Who to contact, in descending order of usefulness.
  *
@@ -106,6 +108,16 @@ function footer(report: BugReport): AdfNode[] {
     trailing.push(paragraph(...withSeparators));
   }
 
+  // Name what the reporter left out. Whoever picks this up needs to know what
+  // to ask for, and a bug that is missing five things should not look the same
+  // as one that is complete.
+  const missing = missingFields(report);
+  if (missing.length > 0) {
+    trailing.push(
+      paragraph(bold('Not provided: '), text(`${missing.join(', ')}. Ask the reporter if needed.`)),
+    );
+  }
+
   return [rule(), paragraph(...parts), ...trailing, paragraph(text('Filed by BugBot.'))];
 }
 
@@ -125,8 +137,11 @@ export function renderDescription(report: BugReport): RenderedDescription {
     heading(3, 'Steps to reproduce'),
     numberedSteps(report.steps),
 
-    heading(3, 'Expected result'),
-    ...paragraphs(report.expected),
+    // Expected is optional; for most bugs it is implied by the actual result,
+    // and an empty heading is worse than no heading.
+    ...(report.expected && report.expected.trim().length > 0
+      ? [heading(3, 'Expected result'), ...paragraphs(report.expected)]
+      : []),
 
     heading(3, 'Actual result'),
     ...paragraphs(report.actual),
@@ -158,6 +173,7 @@ export function renderDescription(report: BugReport): RenderedDescription {
  */
 export function summariseForSlack(report: BugReport): string {
   const device = report.deviceModel ? `${report.device}/${report.deviceModel}` : report.device;
+  // Everything after the device is optional, so filter rather than assume.
   return [
     report.application,
     report.environment,
@@ -166,6 +182,6 @@ export function summariseForSlack(report: BugReport): string {
     report.viewport,
     `${report.severity}/${report.frequency}`,
   ]
-    .filter(Boolean)
+    .filter((part): part is string => Boolean(part))
     .join(' | ');
 }

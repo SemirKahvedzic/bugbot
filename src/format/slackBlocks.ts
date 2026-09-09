@@ -5,7 +5,13 @@
 import type { AnyBlock, HomeView } from '@slack/types';
 import { ACTION } from '../slack/actions.js';
 import { summariseForSlack } from './description.js';
-import { parseLabels, type BugReport, type IntakeSource, type Priority } from '../types.js';
+import {
+  missingFields,
+  parseLabels,
+  type BugReport,
+  type IntakeSource,
+  type Priority,
+} from '../types.js';
 
 export function issueUrl(baseUrl: string, issueKey: string): string {
   return `${baseUrl.replace(/\/+$/, '')}/browse/${issueKey}`;
@@ -163,30 +169,37 @@ export function bugFeedBlocks(input: BugFeedInput): AnyBlock[] {
   if (report) {
     const device = report.deviceModel ? `${report.device} · ${report.deviceModel}` : report.device;
 
-    // Eight fields, comfortably inside Slack's limit of ten.
-    blocks.push({
-      type: 'section',
-      fields: [
-        field('Application', report.application),
-        field('Environment', report.environment),
-        field('Device', device),
-        field('OS', report.os),
-        field('Browser', report.browser),
-        field('Viewport', report.viewport),
-        field('Input', report.inputMethods.join(', ') || '-'),
-        field('Severity', `${report.severity} · ${report.frequency}`),
-      ],
-    });
+    // Only the first four are guaranteed by the form; the rest are optional,
+    // so a field is dropped rather than shown empty. At most eight, which is
+    // inside Slack's limit of ten.
+    const fields = [
+      field('Application', report.application),
+      field('Environment', report.environment),
+      field('Device', device),
+      field('Severity', `${report.severity} · ${report.frequency}`),
+      report.os ? field('OS', report.os) : undefined,
+      report.browser ? field('Browser', report.browser) : undefined,
+      report.viewport ? field('Viewport', report.viewport) : undefined,
+      report.inputMethods?.length ? field('Input', report.inputMethods.join(', ')) : undefined,
+    ].filter((entry): entry is ReturnType<typeof field> => Boolean(entry));
+
+    blocks.push({ type: 'section', fields });
 
     blocks.push(
       section(
-        `*Expected*\n${escape(truncate(report.expected, 500))}\n\n` +
+        (report.expected ? `*Expected*\n${escape(truncate(report.expected, 500))}\n\n` : '') +
           `*Actual*\n${escape(truncate(report.actual, 500))}`,
       ),
     );
 
     if (report.notes && report.notes.trim().length > 0) {
       blocks.push(section(`*Notes*\n${escape(truncate(report.notes, 500))}`));
+    }
+
+    // Say what was skipped, so the gap is visible here as well as in Jira.
+    const missing = missingFields(report);
+    if (missing.length > 0) {
+      blocks.push(context(`:grey_question: not provided: ${escape(missing.join(', '))}`));
     }
   } else {
     // No form behind it. Show whatever the labels carry, then say what is missing.

@@ -44,6 +44,18 @@ export interface Reporter {
   jiraAccountId?: string;
 }
 
+/**
+ * A bug report.
+ *
+ * Eight fields are required by the form, and they are the ones a developer
+ * cannot start without or triage cannot decide without: summary, application,
+ * environment, device, steps, actual result, severity and frequency. Severity
+ * and frequency in particular feed the SPEC 6 priority matrix.
+ *
+ * The rest are optional, to keep filing quick. What that costs is tracked
+ * rather than hidden: `missingFields` lists what was left out, and both the
+ * Jira description and the Slack feed card say so.
+ */
 export interface BugReport {
   summary: string;
   application: Application;
@@ -51,13 +63,13 @@ export interface BugReport {
   device: Device;
   /** Free-text model, e.g. "iPhone 15 Pro" or "Steam Deck". */
   deviceModel?: string;
-  os: string;
-  browser: string;
-  /** Normalised to "1440x900" by the submission parser. */
-  viewport: string;
-  inputMethods: InputMethod[];
+  os?: string;
+  browser?: string;
+  /** Normalised to "1440x900" by the submission parser when given. */
+  viewport?: string;
+  inputMethods?: InputMethod[];
   steps: string;
-  expected: string;
+  expected?: string;
   actual: string;
   frequency: Frequency;
   severity: Severity;
@@ -104,6 +116,32 @@ export function deviceClass(device: Device): string {
     case 'TV/console':
       return 'tv';
   }
+}
+
+/**
+ * The optional fields the reporter left out, in the words the form used.
+ *
+ * Whoever picks the bug up needs to know what to ask for, and counting these
+ * over time is the only way to tell whether making them optional was worth it.
+ *
+ * `notes` is never listed - it is extra by definition, not missing. The device
+ * model is listed only where it actually decides things: on a phone, tablet or
+ * console, "Phone" alone is rarely enough.
+ */
+export function missingFields(report: BugReport): string[] {
+  const missing: string[] = [];
+
+  const modelMatters: Device[] = ['Phone', 'Tablet', 'TV/console'];
+  if (modelMatters.includes(report.device) && !report.deviceModel?.trim()) {
+    missing.push('device model');
+  }
+  if (!report.os?.trim()) missing.push('OS');
+  if (!report.browser?.trim()) missing.push('browser');
+  if (!report.viewport?.trim()) missing.push('viewport');
+  if (!report.inputMethods?.length) missing.push('input method');
+  if (!report.expected?.trim()) missing.push('expected result');
+
+  return missing;
 }
 
 /**
