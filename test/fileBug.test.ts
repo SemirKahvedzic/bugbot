@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { fileBug } from '../src/slack/commands/bug.js';
 import { renderDescription } from '../src/format/description.js';
 import { makeTestContext, type TestHarness } from './helpers/context.js';
+import { countOf } from './helpers/db.js';
 import type { BugReport } from '../src/types.js';
 
 const formFields: Omit<BugReport, 'reporter' | 'source'> = {
@@ -23,8 +24,8 @@ const formFields: Omit<BugReport, 'reporter' | 'source'> = {
 
 let harness: TestHarness;
 
-beforeEach(() => {
-  harness = makeTestContext();
+beforeEach(async () => {
+  harness = await makeTestContext();
 });
 
 /** The ADF pushed by the follow-up setDescription call. */
@@ -48,7 +49,7 @@ describe('fileBug: the happy path', () => {
       triageStatusName: 'Under Triage',
     });
 
-    const row = harness.repo.getIssueReport('SUP-100');
+    const row = await harness.repo.getIssueReport('SUP-100');
     expect(row?.slack_user_id).toBe('U_REPORTER');
     expect(row?.slack_channel_id).toBe('C_BUGS');
     expect(row?.intake_source).toBe('slack_modal');
@@ -107,11 +108,11 @@ describe('fileBug: who the reporter is (SPEC 4)', () => {
 
     // ...but the human is still recorded, in the description and in the DB.
     expect(updatedDescription(harness)).toContain('outsider@roarington.com');
-    expect(harness.repo.getIssueReport('SUP-100')?.slack_user_id).toBe('U_REPORTER');
+    expect((await harness.repo.getIssueReport('SUP-100'))?.slack_user_id).toBe('U_REPORTER');
   });
 
   it('honours JIRA_SET_REAL_REPORTER=false even when an account exists', async () => {
-    const off = makeTestContext({ JIRA_SET_REAL_REPORTER: 'false' });
+    const off = await makeTestContext({ JIRA_SET_REAL_REPORTER: 'false' });
     off.identityResult.jiraAccountId = 'acc-human';
 
     await fileBug(off.context, {
@@ -158,11 +159,11 @@ describe('fileBug: linking Jira back to Slack', () => {
     expect(adf).toMatch(/Slack thread/i);
 
     // The shortcut replies in the original message's thread, not a new one.
-    expect(harness.repo.getIssueReport('SUP-100')?.slack_thread_ts).toBe('555.666');
+    expect((await harness.repo.getIssueReport('SUP-100'))?.slack_thread_ts).toBe('555.666');
   });
 
   it('still files the bug if the description update fails', async () => {
-    const broken = makeTestContext();
+    const broken = await makeTestContext();
     Object.assign(broken.context.issues, {
       setDescription: async () => {
         throw new Error('Jira said no');
@@ -182,7 +183,7 @@ describe('fileBug: linking Jira back to Slack', () => {
 
 describe('fileBug: when Jira refuses', () => {
   it('tells the reporter instead of losing the report silently', async () => {
-    const broken = makeTestContext();
+    const broken = await makeTestContext();
     Object.assign(broken.context.issues, {
       createBug: async () => {
         throw new Error('Jira POST /rest/api/3/issue failed (403): no create permission');
@@ -203,7 +204,7 @@ describe('fileBug: when Jira refuses', () => {
     expect(dm?.text).toMatch(/Nothing you typed is lost/i);
 
     // Nothing was recorded, so /mybugs will not show a phantom issue.
-    expect(broken.db.prepare('SELECT COUNT(*) AS n FROM issue_reports').get()).toEqual({ n: 0 });
+    expect(await countOf(broken.db, 'issue_reports')).toBe(0);
   });
 });
 
@@ -234,26 +235,26 @@ describe('the reporter line in the description', () => {
   const line = (reporter: BugReport['reporter']): string =>
     JSON.stringify(renderDescription({ ...base, reporter }).adf);
 
-  it('prefers name and email together', () => {
+  it('prefers name and email together', async () => {
     expect(line({ displayName: 'Margherita Turrin', email: 'm@roarington.com' })).toContain(
       'Margherita Turrin <m@roarington.com>',
     );
   });
 
-  it('falls back to the name alone', () => {
+  it('falls back to the name alone', async () => {
     expect(line({ displayName: 'Margherita Turrin' })).toContain('Margherita Turrin - via');
   });
 
-  it('falls back to the email when the Slack profile has no name', () => {
+  it('falls back to the email when the Slack profile has no name', async () => {
     expect(line({ email: 'm@roarington.com', slackUserId: 'U1' })).toContain('m@roarington.com');
   });
 
-  it('falls back to a labelled Slack id rather than a bare one', () => {
+  it('falls back to a labelled Slack id rather than a bare one', async () => {
     const text = line({ slackUserId: 'U08HVG0H2EL' });
     expect(text).toContain('Slack user U08HVG0H2EL');
   });
 
-  it('says unknown when we know nothing at all', () => {
+  it('says unknown when we know nothing at all', async () => {
     expect(line({})).toContain('unknown');
   });
 });

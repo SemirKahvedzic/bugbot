@@ -40,7 +40,7 @@ export class Identity {
    * still get a display name, which is enough for the description footer.
    */
   async forSlackUser(slackUserId: string): Promise<SlackIdentity> {
-    const cached = this.deps.repo.userBySlackId(slackUserId);
+    const cached = await this.deps.repo.userBySlackId(slackUserId);
     if (cached?.jira_account_id && cached.email) {
       return {
         slackUserId,
@@ -75,7 +75,7 @@ export class Identity {
     }
 
     if (identity.email || identity.jiraAccountId) {
-      this.deps.repo.upsertUserMap({
+      await this.deps.repo.upsertUserMap({
         slackUserId,
         ...(identity.email ? { email: identity.email } : {}),
         ...(identity.jiraAccountId ? { jiraAccountId: identity.jiraAccountId } : {}),
@@ -93,15 +93,15 @@ export class Identity {
     accountId: string,
     email?: string,
   ): Promise<string | undefined> {
-    const byAccount = this.deps.repo.userByJiraAccountId(accountId);
+    const byAccount = await this.deps.repo.userByJiraAccountId(accountId);
     if (byAccount) return byAccount.slack_user_id;
 
     if (!email) return undefined;
 
-    const byEmail = this.deps.repo.userByEmail(email);
+    const byEmail = await this.deps.repo.userByEmail(email);
     if (byEmail) {
       // Learn the accountId for next time.
-      this.deps.repo.upsertUserMap({ slackUserId: byEmail.slack_user_id, jiraAccountId: accountId });
+      await this.deps.repo.upsertUserMap({ slackUserId: byEmail.slack_user_id, jiraAccountId: accountId });
       return byEmail.slack_user_id;
     }
 
@@ -109,7 +109,7 @@ export class Identity {
       const found = await this.deps.slack.users.lookupByEmail({ email });
       const slackUserId = found.user?.id;
       if (!slackUserId) return undefined;
-      this.deps.repo.upsertUserMap({ slackUserId, jiraAccountId: accountId, email });
+      await this.deps.repo.upsertUserMap({ slackUserId, jiraAccountId: accountId, email });
       return slackUserId;
     } catch (error) {
       // users_not_found is the normal answer for contractors and bots.

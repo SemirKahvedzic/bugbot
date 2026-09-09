@@ -2,52 +2,53 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ACTION } from '../src/slack/actions.js';
 import { mayTriage, priorityForButton, runTriageButton } from '../src/slack/commands/triage.js';
 import { fixtureIssue, makeTestContext, type TestHarness } from './helpers/context.js';
+import { countOf, rows } from './helpers/db.js';
 import type { Priority } from '../src/types.js';
 
 let harness: TestHarness;
 
-beforeEach(() => {
-  harness = makeTestContext();
+beforeEach(async () => {
+  harness = await makeTestContext();
   harness.issuesByKey.set('SUP-1', fixtureIssue({ key: 'SUP-1', priority: 'Medium' }));
-  harness.repo.recordIssueReport({
+  await harness.repo.recordIssueReport({
     issueKey: 'SUP-1',
     slackUserId: 'U_REPORTER',
     slackChannelId: 'C_BUGS',
     intakeSource: 'slack_modal',
   });
-  harness.repo.setThread('SUP-1', 'C_BUGS', '111.222');
+  await harness.repo.setThread('SUP-1', 'C_BUGS', '111.222');
 });
 
 describe('mayTriage', () => {
-  it('lets the QA owner through and nobody else', () => {
+  it('lets the QA owner through and nobody else', async () => {
     expect(mayTriage(harness.context, 'U_QA')).toBe(true);
     expect(mayTriage(harness.context, 'U_RANDOM')).toBe(false);
   });
 });
 
 describe('priorityForButton', () => {
-  it('demotes an urgent bug when Backlog is pressed', () => {
+  it('demotes an urgent bug when Backlog is pressed', async () => {
     expect(priorityForButton(ACTION.triageBacklog, 'Highest')).toBe('Medium');
     expect(priorityForButton(ACTION.triageBacklog, 'High')).toBe('Medium');
   });
 
-  it('leaves an already-quiet priority alone, trusting the triager', () => {
+  it('leaves an already-quiet priority alone, trusting the triager', async () => {
     for (const priority of ['Lowest', 'Low', 'Medium'] as Priority[]) {
       expect(priorityForButton(ACTION.triageBacklog, priority)).toBe(priority);
     }
   });
 
-  it('promotes a quiet bug when Sprint is pressed', () => {
+  it('promotes a quiet bug when Sprint is pressed', async () => {
     for (const priority of ['Lowest', 'Low', 'Medium'] as Priority[]) {
       expect(priorityForButton(ACTION.triageSprint, priority)).toBe('High');
     }
   });
 
-  it('does not demote Highest when Sprint is pressed', () => {
+  it('does not demote Highest when Sprint is pressed', async () => {
     expect(priorityForButton(ACTION.triageSprint, 'Highest')).toBe('Highest');
   });
 
-  it('defaults sensibly when the current priority is unknown', () => {
+  it('defaults sensibly when the current priority is unknown', async () => {
     expect(priorityForButton(ACTION.triageBacklog, undefined)).toBe('Medium');
     expect(priorityForButton(ACTION.triageSprint, undefined)).toBe('High');
   });
@@ -73,7 +74,7 @@ describe('runTriageButton: Backlog', () => {
     expect(harness.posts.some((post) => post.target === 'C_ANNOUNCE')).toBe(false);
     expect(harness.posts.some((post) => post.target === 'U_QA' && post.kind === 'dm')).toBe(false);
 
-    expect(harness.db.prepare('SELECT routed_to, priority FROM triage_events').all()).toEqual([
+    expect(await rows(harness.db, 'SELECT routed_to, priority FROM triage_events')).toEqual([
       { routed_to: 'backlog', priority: 'Medium' },
     ]);
   });
@@ -107,7 +108,7 @@ describe('runTriageButton: Sprint', () => {
     expect(harness.posts.some((post) => post.kind === 'dm' && post.target === 'U_QA')).toBe(true);
     expect(harness.posts.some((post) => post.target === 'C_ANNOUNCE')).toBe(true);
 
-    expect(harness.db.prepare('SELECT routed_to, priority FROM triage_events').all()).toEqual([
+    expect(await rows(harness.db, 'SELECT routed_to, priority FROM triage_events')).toEqual([
       { routed_to: 'sprint', priority: 'High' },
     ]);
   });
@@ -147,7 +148,7 @@ describe('runTriageButton: Duplicate', () => {
     const reporterPost = harness.posts.find((post) => post.target === 'C_BUGS');
     expect(reporterPost?.text).toMatch(/duplicate/i);
 
-    expect(harness.db.prepare('SELECT routed_to FROM triage_events').all()).toEqual([
+    expect(await rows(harness.db, 'SELECT routed_to FROM triage_events')).toEqual([
       { routed_to: 'closed' },
     ]);
   });
@@ -162,7 +163,7 @@ describe('runTriageButton: Duplicate', () => {
     });
 
     expect(message).toMatch(/no transition to \*Duplicate\*/);
-    expect(harness.db.prepare('SELECT COUNT(*) AS n FROM triage_events').get()).toEqual({ n: 0 });
+    expect(await countOf(harness.db, 'triage_events')).toBe(0);
     expect(harness.posts).toHaveLength(0);
   });
 });
@@ -183,7 +184,7 @@ describe('runTriageButton: Need info', () => {
     ]);
     // Deliberately no transition and no triage event: nothing was decided.
     expect(harness.jiraCalls.some((call) => call.op === 'transition')).toBe(false);
-    expect(harness.db.prepare('SELECT COUNT(*) AS n FROM triage_events').get()).toEqual({ n: 0 });
+    expect(await countOf(harness.db, 'triage_events')).toBe(0);
 
     const post = harness.posts.find((p) => p.target === 'C_BUGS');
     expect(post?.threadTs).toBe('111.222');
@@ -192,7 +193,7 @@ describe('runTriageButton: Need info', () => {
 
   it('DMs the reporter when there is no thread to reply in', async () => {
     harness.issuesByKey.set('SUP-3', fixtureIssue({ key: 'SUP-3' }));
-    harness.repo.recordIssueReport({
+    await harness.repo.recordIssueReport({
       issueKey: 'SUP-3',
       slackUserId: 'U_REPORTER',
       intakeSource: 'jira_native',

@@ -6,7 +6,7 @@ import { createLogger } from '../src/logger.js';
 import { fixtureIssue, makeTestContext } from './helpers/context.js';
 
 describe('buildMyBugsJql (SPEC 8)', () => {
-  it('unions the keys we recorded with what Jira thinks they reported', () => {
+  it('unions the keys we recorded with what Jira thinks they reported', async () => {
     const jql = buildMyBugsJql({
       projectKey: 'SUP',
       issueKeys: ['SUP-1', 'SUP-2'],
@@ -17,23 +17,23 @@ describe('buildMyBugsJql (SPEC 8)', () => {
     );
   });
 
-  it('works with only recorded keys', () => {
+  it('works with only recorded keys', async () => {
     expect(buildMyBugsJql({ projectKey: 'SUP', issueKeys: ['SUP-1'] })).toBe(
       'project = SUP AND (issuekey IN (SUP-1)) ORDER BY created DESC',
     );
   });
 
-  it('works with only a Jira account, for someone who only files in Jira', () => {
+  it('works with only a Jira account, for someone who only files in Jira', async () => {
     expect(buildMyBugsJql({ projectKey: 'SUP', issueKeys: [], jiraAccountId: 'acc-1' })).toBe(
       'project = SUP AND (reporter = "acc-1") ORDER BY created DESC',
     );
   });
 
-  it('returns nothing when there is nothing to ask about', () => {
+  it('returns nothing when there is nothing to ask about', async () => {
     expect(buildMyBugsJql({ projectKey: 'SUP', issueKeys: [] })).toBeUndefined();
   });
 
-  it('drops anything that is not an issue key, since keys go straight into JQL', () => {
+  it('drops anything that is not an issue key, since keys go straight into JQL', async () => {
     const jql = buildMyBugsJql({
       projectKey: 'SUP',
       issueKeys: ['SUP-1', 'SUP-1) OR project = SOFT --', 'lowercase-1', ''],
@@ -41,7 +41,7 @@ describe('buildMyBugsJql (SPEC 8)', () => {
     expect(jql).toBe('project = SUP AND (issuekey IN (SUP-1)) ORDER BY created DESC');
   });
 
-  it('strips quotes from an account id so it cannot break out of the clause', () => {
+  it('strips quotes from an account id so it cannot break out of the clause', async () => {
     const jql = buildMyBugsJql({
       projectKey: 'SUP',
       issueKeys: [],
@@ -53,7 +53,7 @@ describe('buildMyBugsJql (SPEC 8)', () => {
 });
 
 describe('jqlUrl', () => {
-  it('percent-encodes the query', () => {
+  it('percent-encodes the query', async () => {
     const url = jqlUrl('https://roarington.atlassian.net', 'project = SUP AND status = "To Do"');
     expect(url).toContain('/issues/?jql=');
     expect(url).not.toContain(' ');
@@ -62,7 +62,7 @@ describe('jqlUrl', () => {
 });
 
 describe('toSummaryLine', () => {
-  it('copes with an issue missing optional fields', () => {
+  it('copes with an issue missing optional fields', async () => {
     expect(toSummaryLine({ key: 'SUP-1', fields: {} })).toEqual({
       key: 'SUP-1',
       summary: '(no summary)',
@@ -70,7 +70,7 @@ describe('toSummaryLine', () => {
     });
   });
 
-  it('carries priority and updated when present', () => {
+  it('carries priority and updated when present', async () => {
     expect(
       toSummaryLine({
         key: 'SUP-2',
@@ -94,13 +94,13 @@ describe('toSummaryLine', () => {
 describe('Leaders (SPEC 9.2)', () => {
   const log = createLogger({ level: 'silent' });
 
-  it('falls back to the default triager with no config file', () => {
+  it('falls back to the default triager with no config file', async () => {
     const leaders = new Leaders({ fallbackSlackUserId: 'U_QA', log });
     expect(leaders.forApplication('world.roarington.com')).toEqual({ slackUserId: 'U_QA' });
     expect(leaders.forApplication(undefined)).toEqual({ slackUserId: 'U_QA' });
   });
 
-  it('tolerates a missing file path without throwing', () => {
+  it('tolerates a missing file path without throwing', async () => {
     const leaders = new Leaders({
       path: 'config/definitely-not-here.json',
       fallbackSlackUserId: 'U_QA',
@@ -109,7 +109,7 @@ describe('Leaders (SPEC 9.2)', () => {
     expect(leaders.forApplication('anything')).toEqual({ slackUserId: 'U_QA' });
   });
 
-  it('reads the application from an app: label', () => {
+  it('reads the application from an app: label', async () => {
     expect(Leaders.applicationFromLabels(['src:slack', 'app:world.roarington.com'])).toBe(
       'world.roarington.com',
     );
@@ -119,14 +119,14 @@ describe('Leaders (SPEC 9.2)', () => {
 });
 
 describe('bugstats (SPEC 8)', () => {
-  it('formats durations at a useful granularity', () => {
+  it('formats durations at a useful granularity', async () => {
     expect(formatDuration(90_000)).toBe('2m');
     expect(formatDuration(3 * 3600_000)).toBe('3h');
     expect(formatDuration(5 * 86_400_000)).toBe('5d');
   });
 
   it('collects counts by application and severity from labels', async () => {
-    const harness = makeTestContext();
+    const harness = await makeTestContext();
     harness.issuesByKey.set(
       'SUP-1',
       fixtureIssue({ key: 'SUP-1', labels: ['app:world.roarington.com', 'sev:major'] }),
@@ -153,7 +153,7 @@ describe('bugstats (SPEC 8)', () => {
     ]);
   });
 
-  it('renders a digest that names the numbers', () => {
+  it('renders a digest that names the numbers', async () => {
     const stats: Stats = {
       since: '2026-09-01T00:00:00Z',
       days: 7,
@@ -178,7 +178,7 @@ describe('bugstats (SPEC 8)', () => {
     expect(text).toContain('<@U1>');
   });
 
-  it('says so plainly when nothing was triaged', () => {
+  it('says so plainly when nothing was triaged', async () => {
     const text = JSON.stringify(
       statsBlocks({
         since: '2026-09-01T00:00:00Z',

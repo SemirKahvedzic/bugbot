@@ -40,7 +40,7 @@ export async function applyRoute(
   const { decision, issueKey } = input;
   const notified: string[] = [];
   const url = issueUrl(config.JIRA_BASE_URL, issueKey);
-  const report = repo.getIssueReport(issueKey);
+  const report = await repo.getIssueReport(issueKey);
 
   let moved = false;
 
@@ -72,7 +72,7 @@ export async function applyRoute(
 
   // --- Audit row ----------------------------------------------------------
 
-  repo.recordTriageEvent({
+  await repo.recordTriageEvent({
     issueKey,
     ...(input.fromStatus ? { fromStatus: input.fromStatus } : {}),
     toStatus: input.toStatus,
@@ -104,7 +104,7 @@ export async function applyRoute(
     const application = Leaders.applicationFromLabels(input.labels);
     const leader = leaders.forApplication(application);
 
-    if (leader.slackUserId && repo.claimNotification(`leader:${issueKey}:${input.changeId}`)) {
+    if (leader.slackUserId && (await repo.claimNotification(`leader:${issueKey}:${input.changeId}`))) {
       const result = await notifier.dm({
         userId: leader.slackUserId,
         fallback: `${issueKey} needs your attention (${input.priority ?? 'unknown priority'})`,
@@ -126,7 +126,7 @@ export async function applyRoute(
 
   // --- Announce channel ---------------------------------------------------
 
-  if (decision.announce && repo.claimNotification(`announce:${issueKey}:${input.changeId}`)) {
+  if (decision.announce && (await repo.claimNotification(`announce:${issueKey}:${input.changeId}`))) {
     const mention = decision.escalated ? escalationMention(config.ESCALATION_MENTION) : '';
     const reporterTag =
       decision.escalated && report?.slack_user_id ? ` (reported by <@${report.slack_user_id}>)` : '';
@@ -233,7 +233,7 @@ async function tellReporter(
     return false;
   }
 
-  if (!repo.claimNotification(input.dedupeKey)) {
+  if (!(await repo.claimNotification(input.dedupeKey))) {
     log.debug({ issueKey: input.issueKey }, 'notification already sent, skipping');
     return false;
   }

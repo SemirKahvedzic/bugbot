@@ -10,6 +10,7 @@ import type { App } from '@slack/bolt';
 import type { AnyBlock } from '@slack/types';
 import { escape } from '../../format/slackBlocks.js';
 import { Leaders } from '../../triage/leaders.js';
+import { keepAlive } from '../../runtime.js';
 import { COMMAND } from '../actions.js';
 import type { BugbotContext } from '../../context.js';
 
@@ -49,7 +50,11 @@ export async function collectStats(context: BugbotContext, days = 7): Promise<St
     .filter((label) => label.startsWith('sev:'))
     .map((label) => label.slice('sev:'.length));
 
-  const medianTriageMs = repo.medianTimeInTriageMs(sinceIso);
+  const [medianTriageMs, routing, topReporters] = await Promise.all([
+    repo.medianTimeInTriageMs(sinceIso),
+    repo.routingSplitSince(sinceIso),
+    repo.topReportersSince(sinceIso, 3),
+  ]);
 
   return {
     since: sinceIso,
@@ -57,13 +62,12 @@ export async function collectStats(context: BugbotContext, days = 7): Promise<St
     total: created.length,
     byApplication: tally(applications).map(([application, count]) => ({ application, count })),
     bySeverity: tally(severities).map(([severity, count]) => ({ severity, count })),
-    routing: repo
-      .routingSplitSince(sinceIso)
-      .map((row) => ({ routedTo: row.routed_to, count: row.count })),
+    routing: routing.map((row) => ({ routedTo: row.routed_to, count: row.count })),
     ...(medianTriageMs !== undefined ? { medianTriageMs } : {}),
-    topReporters: repo
-      .topReportersSince(sinceIso, 3)
-      .map((row) => ({ slackUserId: row.slack_user_id, count: row.count })),
+    topReporters: topReporters.map((row) => ({
+      slackUserId: row.slack_user_id,
+      count: row.count,
+    })),
   };
 }
 
@@ -129,49 +133,61 @@ export function statsBlocks(stats: Stats): AnyBlock[] {
 export function registerBugStatsCommand(app: App, context: BugbotContext): void {
   app.command(COMMAND.bugStats, async ({ command, ack, respond }) => {
     await ack();
+    // Reading a week of issues out of Jira is well past the three second
+    // budget, so answer through response_url in the background.
+    keepAlive(reportStats(context, command.text ?? '', respond), 'bugstats');
+  });
+}
 
-    let stats: Stats;
-    try {
-      stats = await collectStats(context);
-    } catch (error) {
-      context.log.error(
-        { err: error instanceof Error ? error.message : String(error) },
-        'could not collect stats',
-      );
-      await respond({ response_type: 'ephemeral', text: 'I could not read the numbers from Jira.' });
-      return;
-    }
+type Respond = (message: Record<string, unknown>) => Promise<unknown>;
 
-    const blocks = statsBlocks(stats);
+/** Collect the numbers and answer. Split out so the handler can ack at once. */
+async function reportStats(
+  context: BugbotContext,
+  commandText: string,
+  respond: Respond,
+): Promise<void> {
+  let stats: Stats;
+  try {
+    stats = await collectStats(context);
+  } catch (error) {
+    context.log.error(
+      { err: error instanceof Error ? error.message : String(error) },
+      'could not collect stats',
+    );
+    await respond({ response_type: 'ephemeral', text: 'I could not read the numbers from Jira.' });
+    return;
+  }
 
-    // "post" publishes to the announce channel; anything else stays private.
-    if (command.text?.trim().toLowerCase() === 'post') {
-      const result = await context.notifier.post({
-        channel: context.config.SLACK_ANNOUNCE_CHANNEL,
-        fallback: `BugBot weekly digest: ${stats.total} bugs`,
-        blocks,
-      });
-      await respond({
-        response_type: 'ephemeral',
-        text: result.ok
-          ? `Posted to <#${context.config.SLACK_ANNOUNCE_CHANNEL}>.`
-          : 'I could not post to the announce channel.',
-      });
-      return;
-    }
+  const blocks = statsBlocks(stats);
 
+  // "post" publishes to the announce channel; anything else stays private.
+  if (commandText.trim().toLowerCase() === 'post') {
+    const result = await context.notifier.post({
+      channel: context.config.SLACK_ANNOUNCE_CHANNEL,
+      fallback: `BugBot weekly digest: ${stats.total} bugs`,
+      blocks,
+    });
     await respond({
       response_type: 'ephemeral',
-      text: `BugBot digest: ${stats.total} bugs in ${stats.days} days.`,
-      blocks: [
-        ...blocks,
-        {
-          type: 'context',
-          elements: [
-            { type: 'mrkdwn', text: 'Run `/bugstats post` to share this in the channel.' },
-          ],
-        },
-      ],
+      text: result.ok
+        ? `Posted to <#${context.config.SLACK_ANNOUNCE_CHANNEL}>.`
+        : 'I could not post to the announce channel.',
     });
+    return;
+  }
+
+  await respond({
+    response_type: 'ephemeral',
+    text: `BugBot digest: ${stats.total} bugs in ${stats.days} days.`,
+    blocks: [
+      ...blocks,
+      {
+        type: 'context',
+        elements: [
+          { type: 'mrkdwn', text: 'Run `/bugstats post` to share this in the channel.' },
+        ],
+      },
+    ],
   });
 }

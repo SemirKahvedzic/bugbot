@@ -14,13 +14,17 @@
     "discover": "tsx scripts/discover.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "migrate": "tsx scripts/migrate.ts",
+    "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
     "@slack/bolt": "^4.2.0",
     "@slack/web-api": "^8.1.1",
+    "@vercel/functions": "^3.9.6",
     "dotenv": "^16.4.7",
     "express": "^5.1.0",
+    "pg": "^8.23.0",
     "pino": "^9.6.0",
     "zod": "^3.24.1"
   },
@@ -28,7 +32,9 @@
     "@slack/types": "^2.22.0",
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.0",
+    "@types/pg": "^8.23.1",
     "msw": "^2.7.0",
+    "pg-mem": "^3.0.14",
     "pino-pretty": "^13.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

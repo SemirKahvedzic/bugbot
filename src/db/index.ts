@@ -1,105 +1,161 @@
 /**
- * SQLite access. All SQL lives under src/db/ so Postgres stays a drop-in
- * replacement later (SPEC 3).
+ * Postgres access. All SQL lives under src/db/ (SPEC 3).
  *
- * Uses Node's built-in `node:sqlite` rather than `better-sqlite3`.
- * better-sqlite3 is a native module with no prebuilt binary for the Node
- * version on the dev machine, so installing it needed a node-gyp toolchain
- * (Python + Visual Studio build tools) that is not there. `node:sqlite` is the
- * same embedded SQLite with no compile step, which keeps `npm ci` working
- * everywhere and drops the build toolchain out of the Docker image. The
- * requirement that mattered - one small file we can back up by copying, all
- * SQL confined to this directory - is unchanged.
+ * Postgres rather than SQLite because BugBot is deployed to Vercel, where the
+ * filesystem is ephemeral and per-instance. The `notifications` table is what
+ * guarantees a redelivered webhook sends nothing twice; on a disappearing disk
+ * that guarantee disappears with it, and duplicate DMs are the one failure
+ * mode SPEC 7 singles out as trust-destroying.
+ *
+ * Everything goes through the small `Db` interface below rather than touching
+ * `pg` directly, so the repository layer has no driver knowledge and tests can
+ * run against an in-memory Postgres.
  */
-import { mkdirSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { migrations, type Migration } from './migrations/index.js';
+import { Pool, type PoolClient, type PoolConfig } from 'pg';
 
-export type Db = DatabaseSync;
+export interface QueryResult<T> {
+  rows: T[];
+  /** Rows actually inserted/updated/deleted. Used for ON CONFLICT DO NOTHING. */
+  rowCount: number;
+}
+
+export interface Db {
+  query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<QueryResult<T>>;
+  /** Runs fn on a single dedicated connection inside BEGIN/COMMIT. */
+  transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T>;
+  close(): Promise<void>;
+}
+
+/** Postgres returns COUNT(*) and bigint columns as strings. */
+export function toCount(value: unknown): number {
+  const parsed = typeof value === 'number' ? value : Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function poolConfig(connectionString: string, max: number): PoolConfig {
+  const config: PoolConfig = {
+    connectionString,
+    max,
+    // Serverless invocations are short; do not hold connections open.
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 10_000,
+  };
+
+  // Escape hatch for providers serving a certificate pg will not verify.
+  // Normal hosted Postgres (Neon, Vercel, Supabase) needs none of this.
+  if (process.env.DATABASE_SSL_NO_VERIFY === 'true') {
+    config.ssl = { rejectUnauthorized: false };
+  }
+
+  return config;
+}
+
+class PgDb implements Db {
+  constructor(private readonly pool: Pool) {}
+
+  async query<T = Record<string, unknown>>(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<QueryResult<T>> {
+    const result = await this.pool.query(sql, params);
+    return { rows: result.rows as T[], rowCount: result.rowCount ?? 0 };
+  }
+
+  async transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const value = await fn(new PgClientDb(client));
+      await client.query('COMMIT');
+      return value;
+    } catch (error) {
+      // Leave the schema as it was rather than half-applied.
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.pool.end();
+  }
+}
+
+/** A Db bound to one checked-out connection, for use inside a transaction. */
+class PgClientDb implements Db {
+  constructor(private readonly client: PoolClient) {}
+
+  async query<T = Record<string, unknown>>(
+    sql: string,
+    params: unknown[] = [],
+  ): Promise<QueryResult<T>> {
+    const result = await this.client.query(sql, params);
+    return { rows: result.rows as T[], rowCount: result.rowCount ?? 0 };
+  }
+
+  transaction<T>(fn: (tx: Db) => Promise<T>): Promise<T> {
+    // Already inside one; nesting would need savepoints and nothing needs them.
+    return fn(this);
+  }
+
+  async close(): Promise<void> {
+    // The pool owns the connection's lifetime.
+  }
+}
 
 export interface OpenDatabaseOptions {
-  /** File path, or ':memory:' for tests. */
-  path: string;
-  /** Run pending migrations on open. Default true. */
-  migrate?: boolean;
-  readonly?: boolean;
+  connectionString: string;
+  max?: number;
 }
 
 export function openDatabase(options: OpenDatabaseOptions): Db {
-  const { path, migrate = true, readonly = false } = options;
-
-  if (path !== ':memory:') {
-    mkdirSync(dirname(path), { recursive: true });
-  }
-
-  const db = new DatabaseSync(path, { readOnly: readonly });
-
-  // WAL keeps readers from blocking the webhook writer. Meaningless for an
-  // in-memory database and rejected on a read-only handle.
-  if (path !== ':memory:' && !readonly) {
-    db.exec('PRAGMA journal_mode = WAL');
-  }
-  db.exec('PRAGMA foreign_keys = ON');
-  db.exec('PRAGMA busy_timeout = 5000');
-
-  if (migrate && !readonly) runMigrations(db);
-  return db;
+  const pool = new Pool(poolConfig(options.connectionString, options.max ?? 5));
+  // An idle client erroring must not take the process down.
+  pool.on('error', () => undefined);
+  return new PgDb(pool);
 }
 
 /**
- * Apply every migration not yet recorded, each in its own transaction.
- * Idempotent: running twice is a no-op.
+ * Wrap an already-constructed pool.
+ *
+ * Exists so tests can hand in pg-mem's pool and exercise this exact
+ * implementation - including the transaction handling - rather than a
+ * lookalike written for the tests.
  */
-export function runMigrations(db: Db, list: Migration[] = migrations): string[] {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS schema_migrations (
-      id         TEXT PRIMARY KEY,
-      applied_at TEXT NOT NULL
-    );
-  `);
-
-  const alreadyApplied = new Set(
-    db.prepare('SELECT id FROM schema_migrations').all().map((row) => String(row.id)),
-  );
-
-  const applied: string[] = [];
-  const record = db.prepare('INSERT INTO schema_migrations (id, applied_at) VALUES (?, ?)');
-
-  for (const migration of list) {
-    if (alreadyApplied.has(migration.id)) continue;
-    db.exec('BEGIN');
-    try {
-      db.exec(migration.sql);
-      record.run(migration.id, new Date().toISOString());
-      db.exec('COMMIT');
-    } catch (error) {
-      // Leave the schema exactly as it was rather than half-migrated.
-      db.exec('ROLLBACK');
-      throw error;
-    }
-    applied.push(migration.id);
-  }
-
-  return applied;
-}
-
-/** Cheap liveness probe for /readyz. */
-export function pingDatabase(db: Db): boolean {
-  const row = db.prepare('SELECT 1 AS ok').get();
-  return row?.ok === 1;
+export function wrapPool(pool: Pool): Db {
+  return new PgDb(pool);
 }
 
 let cached: Db | undefined;
 
-export function getDatabase(path: string): Db {
-  if (!cached) cached = openDatabase({ path });
+/**
+ * Process-wide database handle.
+ *
+ * On Vercel this is created once per warm instance and reused across
+ * invocations, which is the whole reason the pool sits at module scope.
+ */
+export function getDatabase(connectionString: string, max?: number): Db {
+  if (!cached) cached = openDatabase({ connectionString, ...(max ? { max } : {}) });
   return cached;
 }
 
-export function closeDatabase(): void {
+export async function closeDatabase(): Promise<void> {
   if (cached) {
-    cached.close();
+    const db = cached;
     cached = undefined;
+    await db.close();
   }
 }
+
+/** Cheap liveness probe for /readyz. */
+export async function pingDatabase(db: Db): Promise<boolean> {
+  try {
+    const result = await db.query<{ ok: number }>('SELECT 1 AS ok');
+    return toCount(result.rows[0]?.ok) === 1;
+  } catch {
+    return false;
+  }
+}
+
+export { runMigrations } from './migrate.js';

@@ -1,5 +1,6 @@
-# Node 24: node:sqlite is built in, so there are no native modules to compile
-# and no build toolchain in this image. Matches .nvmrc.
+# Node 24. No native modules, so no build toolchain in this image. Matches
+# .nvmrc. This image is for local development and as a non-Vercel escape
+# hatch; the deployment target is a Vercel function (see api/index.ts).
 FROM node:24-bookworm-slim AS builder
 
 WORKDIR /app
@@ -28,10 +29,7 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json ./
 
-# SQLite lives on a mounted volume; the node user must own it.
-RUN mkdir -p /data && chown -R node:node /data /app
-VOLUME ["/data"]
-
+RUN chown -R node:node /app
 USER node
 EXPOSE 3000
 

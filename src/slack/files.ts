@@ -10,6 +10,7 @@
  */
 import type { App } from '@slack/bolt';
 import type { BugbotContext } from '../context.js';
+import { keepAlive } from '../runtime.js';
 
 /** Jira Cloud's default per-file limit is 10MB; leave headroom and be explicit. */
 export const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
@@ -65,7 +66,7 @@ export async function syncThreadFiles(
 ): Promise<{ issueKey?: string; attached: number; skipped: number }> {
   const { repo, issues, notifier, log, config } = context;
 
-  const report = repo.findByThread(input.channelId, input.threadTs);
+  const report = await repo.findByThread(input.channelId, input.threadTs);
   if (!report) return { attached: 0, skipped: 0 };
 
   const botToken = config.SLACK_BOT_TOKEN;
@@ -79,7 +80,7 @@ export async function syncThreadFiles(
 
   for (const file of input.files) {
     // A redelivered event must not attach the same file twice.
-    if (!repo.claimNotification(`attach:${report.issue_key}:${file.id}`)) {
+    if (!(await repo.claimNotification(`attach:${report.issue_key}:${file.id}`))) {
       log.debug({ issueKey: report.issue_key, fileId: file.id }, 'file already attached, skipping');
       continue;
     }
@@ -166,18 +167,16 @@ export function registerFileSync(app: App, context: BugbotContext): void {
     if (!message.files || message.files.length === 0) return;
     if (!message.channel || !message.ts || !message.thread_ts) return;
 
-    try {
-      await syncThreadFiles(context, {
+    // Downloading and uploading files is far too slow to hold the event
+    // response open.
+    keepAlive(
+      syncThreadFiles(context, {
         channelId: message.channel,
         threadTs: message.thread_ts,
         messageTs: message.ts,
         files: message.files,
-      });
-    } catch (error) {
-      context.log.error(
-        { err: error instanceof Error ? error.message : String(error) },
-        'attachment sync failed',
-      );
-    }
+      }),
+      'syncThreadFiles',
+    );
   });
 }

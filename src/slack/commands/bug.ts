@@ -10,6 +10,7 @@ import type { App } from '@slack/bolt';
 import { renderDescription } from '../../format/description.js';
 import { intakeConfirmationBlocks, issueUrl } from '../../format/slackBlocks.js';
 import { allowedChannelMentions, channelAllowed, type BugbotContext } from '../../context.js';
+import { keepAlive } from '../../runtime.js';
 import { COMMAND } from '../actions.js';
 import {
   BUG_MODAL_CALLBACK_ID,
@@ -86,7 +87,7 @@ export async function fileBug(
 
   const { issue, priority, transitioned } = created;
 
-  repo.recordIssueReport({
+  await repo.recordIssueReport({
     issueKey: issue.key,
     slackUserId: input.slackUserId,
     ...(input.metadata.channelId ? { slackChannelId: input.metadata.channelId } : {}),
@@ -128,7 +129,7 @@ export async function fileBug(
   // For the shortcut path the original message's thread is the root instead.
   if (posted.ok && posted.channel && posted.ts) {
     const threadTs = input.metadata.threadTs ?? posted.ts;
-    repo.setThread(issue.key, posted.channel, threadTs);
+    await repo.setThread(issue.key, posted.channel, threadTs);
     await linkBackToSlack(context, { issueKey: issue.key, report, channel: posted.channel, threadTs });
   }
 
@@ -220,20 +221,18 @@ export function registerBugCommand(app: App, context: BugbotContext): void {
       return;
     }
 
-    // Ack first: Jira is far too slow for Slack's three second budget.
+    // Ack first: Jira is far too slow for Slack's three second budget. The
+    // filing continues in the background, which on Vercel means telling the
+    // runtime to keep the invocation alive for it.
     await ack();
 
-    try {
-      await fileBug(context, {
+    keepAlive(
+      fileBug(context, {
         report: parsed.report,
         metadata: parsed.metadata,
         slackUserId: body.user.id,
-      });
-    } catch (error) {
-      context.log.error(
-        { err: error instanceof Error ? error.message : String(error) },
-        'unhandled failure while filing a bug',
-      );
-    }
+      }),
+      'fileBug',
+    );
   });
 }

@@ -5,6 +5,7 @@
  */
 import type { App } from '@slack/bolt';
 import { homeView } from '../format/slackBlocks.js';
+import { keepAlive } from '../runtime.js';
 import { ACTION } from './actions.js';
 import { fetchMyBugs, MY_BUGS_LIMIT } from './commands/mybugs.js';
 import { buildBugModal } from './views/bugModal.js';
@@ -30,24 +31,12 @@ export function registerHome(app: App, context: BugbotContext): void {
   app.event('app_home_opened', async ({ event }) => {
     // Slack also fires this for the messages tab; only the home tab needs a view.
     if (event.tab !== 'home') return;
-    try {
-      await publishHomeFor(context, event.user);
-    } catch (error) {
-      context.log.error(
-        { err: error instanceof Error ? error.message : String(error) },
-        'could not build the App Home view',
-      );
-    }
+    keepAlive(publishHomeFor(context, event.user), 'publishHome');
   });
 
   app.action(ACTION.homeRefresh, async ({ ack, body }) => {
     await ack();
-    await publishHomeFor(context, body.user.id).catch((error: unknown) => {
-      context.log.error(
-        { err: error instanceof Error ? error.message : String(error) },
-        'home refresh failed',
-      );
-    });
+    keepAlive(publishHomeFor(context, body.user.id), 'homeRefresh');
   });
 
   app.action(ACTION.homeFileBug, async ({ ack, body, client }) => {

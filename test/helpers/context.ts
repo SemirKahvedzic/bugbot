@@ -5,7 +5,8 @@
  * touching Slack or Jira.
  */
 import { loadConfig, type Config } from '../../src/config.js';
-import { openDatabase, type Db } from '../../src/db/index.js';
+import type { Db } from '../../src/db/index.js';
+import { makeTestDb } from './db.js';
 import { Repo } from '../../src/db/repo.js';
 import { createLogger } from '../../src/logger.js';
 import { Leaders } from '../../src/triage/leaders.js';
@@ -14,6 +15,7 @@ import type { Issue } from '../../src/jira/issues.js';
 import type { Priority } from '../../src/types.js';
 
 export const BASE_ENV = {
+  DATABASE_URL: 'postgresql://test:test@localhost:5432/test',
   JIRA_BASE_URL: 'https://roarington.atlassian.net',
   JIRA_CLOUD_ID: '57de5553-0941-4346-821f-c46f7dde06cc',
   JIRA_EMAIL: 'bugbot@roarington.com',
@@ -57,10 +59,12 @@ export interface TestHarness {
   reset(): void;
 }
 
-export function makeTestContext(overrides: Partial<Record<string, string>> = {}): TestHarness {
+export async function makeTestContext(
+  overrides: Partial<Record<string, string>> = {},
+): Promise<TestHarness> {
   const config: Config = loadConfig({ ...BASE_ENV, ...overrides });
   const log = createLogger({ level: 'silent' });
-  const db = openDatabase({ path: ':memory:' });
+  const db = await makeTestDb();
   const repo = new Repo(db);
 
   const posts: PostedMessage[] = [];

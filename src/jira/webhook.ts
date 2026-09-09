@@ -232,7 +232,7 @@ export async function handleWebhook(
 
   if (leftTriage) {
     // The one change that drives routing (SPEC 7).
-    if (!repo.claimNotification(`route:${issueKey}:${changeId}`)) {
+    if (!(await repo.claimNotification(`route:${issueKey}:${changeId}`))) {
       log.info({ issueKey, changeId }, 'routing already applied for this change - ignoring replay');
       return { action: 'ignored_duplicate', issueKey };
     }
@@ -265,14 +265,14 @@ export async function handleWebhook(
 
   // Any other status change: keep the reporter informed (SPEC 8), digested so
   // a burst of edits produces one message.
-  const report = repo.getIssueReport(issueKey);
+  const report = await repo.getIssueReport(issueKey);
   const slackUserId = report?.slack_user_id ?? undefined;
   if (!slackUserId) return { action: 'ignored_not_triage_exit', issueKey };
 
-  if (!repo.claimNotification(`status:${issueKey}:${changeId}`)) {
+  if (!(await repo.claimNotification(`status:${issueKey}:${changeId}`))) {
     return { action: 'ignored_duplicate', issueKey };
   }
-  if (!repo.claimDigest(`digest:${issueKey}`, DIGEST_WINDOW_MS)) {
+  if (!(await repo.claimDigest(`digest:${issueKey}`, DIGEST_WINDOW_MS))) {
     log.debug({ issueKey }, 'inside the digest window - not sending another DM');
     return { action: 'ignored_duplicate', issueKey };
   }
@@ -314,7 +314,7 @@ async function handleCreated(
   const { config, log, repo, issues, identity } = context;
   const fields = payload.issue.fields;
 
-  if (!repo.claimNotification(`created:${issueKey}`)) {
+  if (!(await repo.claimNotification(`created:${issueKey}`))) {
     return { action: 'ignored_duplicate', issueKey };
   }
 
@@ -326,7 +326,7 @@ async function handleCreated(
     slackUserId = await identity.slackUserForJiraAccount(reporterAccountId, reporterEmail);
   }
 
-  repo.recordIssueReport({
+  await repo.recordIssueReport({
     issueKey,
     ...(slackUserId ? { slackUserId } : {}),
     intakeSource: 'jira_native',

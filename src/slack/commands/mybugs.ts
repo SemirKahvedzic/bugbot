@@ -7,6 +7,7 @@
  */
 import type { App } from '@slack/bolt';
 import { myBugsBlocks, type IssueSummaryLine } from '../../format/slackBlocks.js';
+import { keepAlive } from '../../runtime.js';
 import { COMMAND } from '../actions.js';
 import type { BugbotContext } from '../../context.js';
 
@@ -45,8 +46,8 @@ export async function fetchMyBugs(
 ): Promise<MyBugs> {
   const { config, repo, issues, identity, log } = context;
 
-  const issueKeys = repo.issueKeysForSlackUser(slackUserId, 100);
-  const cached = repo.userBySlackId(slackUserId);
+  const issueKeys = await repo.issueKeysForSlackUser(slackUserId, 100);
+  const cached = await repo.userBySlackId(slackUserId);
   let jiraAccountId = cached?.jira_account_id ?? undefined;
 
   if (!jiraAccountId) {
@@ -99,17 +100,23 @@ export function registerMyBugsCommand(app: App, context: BugbotContext): void {
   app.command(COMMAND.myBugs, async ({ command, ack, respond }) => {
     await ack();
 
-    const { issues, jqlUrl: url } = await fetchMyBugs(context, command.user_id);
-
-    await respond({
-      response_type: 'ephemeral',
-      text: `You have ${issues.length} bug report(s).`,
-      blocks: myBugsBlocks({
-        baseUrl: context.config.JIRA_BASE_URL,
-        issues,
-        jqlUrl: url,
-        limit: MY_BUGS_LIMIT,
-      }),
-    });
+    // A Jira search can outlast Slack's three second budget, so answer through
+    // response_url in the background rather than holding the ack.
+    keepAlive(
+      (async () => {
+        const { issues, jqlUrl: url } = await fetchMyBugs(context, command.user_id);
+        await respond({
+          response_type: 'ephemeral',
+          text: `You have ${issues.length} bug report(s).`,
+          blocks: myBugsBlocks({
+            baseUrl: context.config.JIRA_BASE_URL,
+            issues,
+            jqlUrl: url,
+            limit: MY_BUGS_LIMIT,
+          }),
+        });
+      })(),
+      'mybugs',
+    );
   });
 }

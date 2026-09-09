@@ -11,6 +11,7 @@ import {
   type WebhookPayload,
 } from '../src/jira/webhook.js';
 import { fixtureIssue, makeTestContext, SERVICE_ACCOUNT_ID, type TestHarness } from './helpers/context.js';
+import { countOf, rows } from './helpers/db.js';
 import type { Priority } from '../src/types.js';
 
 // --- Security -------------------------------------------------------------
@@ -18,7 +19,7 @@ import type { Priority } from '../src/types.js';
 describe('secretMatches', () => {
   const secret = 'a'.repeat(64);
 
-  it('accepts the right secret and rejects everything else', () => {
+  it('accepts the right secret and rejects everything else', async () => {
     expect(secretMatches(secret, secret)).toBe(true);
     expect(secretMatches(`${'a'.repeat(63)}b`, secret)).toBe(false);
     expect(secretMatches('a', secret)).toBe(false);
@@ -39,26 +40,26 @@ describe('ipv4InCidr', () => {
     expect(ipv4InCidr(ip, cidr)).toBe(expected);
   });
 
-  it('rejects malformed input rather than matching by accident', () => {
+  it('rejects malformed input rather than matching by accident', async () => {
     expect(ipv4InCidr('not-an-ip', '10.0.0.0/8')).toBe(false);
     expect(ipv4InCidr('10.0.0.1', 'garbage')).toBe(false);
     expect(ipv4InCidr('10.0.0.1', '10.0.0.0/33')).toBe(false);
     expect(ipv4InCidr('10.0.0.999', '10.0.0.0/8')).toBe(false);
   });
 
-  it('understands the IPv4-mapped form Node reports behind a proxy', () => {
+  it('understands the IPv4-mapped form Node reports behind a proxy', async () => {
     expect(normaliseIp('::ffff:13.52.5.100')).toBe('13.52.5.100');
     expect(ipv4InCidr('::ffff:13.52.5.100', '13.52.5.96/28')).toBe(true);
   });
 });
 
 describe('ipAllowed', () => {
-  it('allows everything when the allowlist is empty, as documented', () => {
+  it('allows everything when the allowlist is empty, as documented', async () => {
     expect(ipAllowed('1.2.3.4', [])).toBe(true);
     expect(ipAllowed(undefined, [])).toBe(true);
   });
 
-  it('enforces the list once it has entries', () => {
+  it('enforces the list once it has entries', async () => {
     const list = ['13.52.5.96/28', '18.136.214.96/28'];
     expect(ipAllowed('13.52.5.100', list)).toBe(true);
     expect(ipAllowed('18.136.214.97', list)).toBe(true);
@@ -66,7 +67,7 @@ describe('ipAllowed', () => {
     expect(ipAllowed(undefined, list)).toBe(false);
   });
 
-  it('accepts a bare address as well as a CIDR', () => {
+  it('accepts a bare address as well as a CIDR', async () => {
     expect(ipAllowed('203.0.113.5', ['203.0.113.5'])).toBe(true);
     expect(ipAllowed('203.0.113.6', ['203.0.113.5'])).toBe(false);
   });
@@ -126,14 +127,14 @@ function payload(input: {
 }
 
 describe('payload helpers', () => {
-  it('extracts a status change', () => {
+  it('extracts a status change', async () => {
     expect(extractStatusChange(payload({ from: 'Under Triage', to: 'To Do' }))).toEqual({
       fromStatus: 'Under Triage',
       toStatus: 'To Do',
     });
   });
 
-  it('returns nothing when the change was not a status change', () => {
+  it('returns nothing when the change was not a status change', async () => {
     const raw = webhookSchema.parse({
       webhookEvent: 'jira:issue_updated',
       issue: { key: 'SUP-1', fields: { project: { key: 'SUP' } } },
@@ -142,7 +143,7 @@ describe('payload helpers', () => {
     expect(extractStatusChange(raw)).toBeUndefined();
   });
 
-  it('uses the changelog id as the dedupe id, falling back to the event', () => {
+  it('uses the changelog id as the dedupe id, falling back to the event', async () => {
     expect(changeIdFor(payload({ from: 'Under Triage', to: 'To Do', changelogId: '77' }))).toBe('77');
     expect(changeIdFor(payload({}))).toBe('jira:issue_updated:SUP-1');
   });
@@ -152,17 +153,17 @@ describe('payload helpers', () => {
 
 let harness: TestHarness;
 
-beforeEach(() => {
-  harness = makeTestContext();
+beforeEach(async () => {
+  harness = await makeTestContext();
   harness.issuesByKey.set('SUP-1', fixtureIssue({ key: 'SUP-1' }));
   // The reporter is known, as they would be for a Slack-filed bug.
-  harness.repo.recordIssueReport({
+  await harness.repo.recordIssueReport({
     issueKey: 'SUP-1',
     slackUserId: 'U_REPORTER',
     slackChannelId: 'C_BUGS',
     intakeSource: 'slack_modal',
   });
-  harness.repo.setThread('SUP-1', 'C_BUGS', '111.222');
+  await harness.repo.setThread('SUP-1', 'C_BUGS', '111.222');
 });
 
 describe('handleWebhook guards (SPEC 11)', () => {
@@ -250,9 +251,7 @@ describe('handleWebhook routing: all five priorities (SPEC 7)', () => {
       expect(Boolean(announce)).toBe(expectAnnounce);
 
       // The audit row records the decision.
-      const events = harness.db
-        .prepare('SELECT priority, routed_to FROM triage_events WHERE issue_key = ?')
-        .all('SUP-1');
+      const events = await rows(harness.db, 'SELECT priority, routed_to FROM triage_events WHERE issue_key = $1', ['SUP-1']);
       expect(events).toEqual([{ priority, routed_to: destination }]);
     },
   );
@@ -268,9 +267,9 @@ describe('handleWebhook routing: all five priorities (SPEC 7)', () => {
   });
 
   it('uses @here only when ESCALATION_MENTION says so', async () => {
-    const loud = makeTestContext({ ESCALATION_MENTION: 'here' });
+    const loud = await makeTestContext({ ESCALATION_MENTION: 'here' });
     loud.issuesByKey.set('SUP-1', fixtureIssue({ key: 'SUP-1' }));
-    loud.repo.recordIssueReport({ issueKey: 'SUP-1', slackUserId: 'U_REPORTER', intakeSource: 'slack_modal' });
+    await loud.repo.recordIssueReport({ issueKey: 'SUP-1', slackUserId: 'U_REPORTER', intakeSource: 'slack_modal' });
 
     await handleWebhook(loud.context, payload({ from: 'Under Triage', to: 'To Do', priority: 'Highest' }));
     const announce = loud.posts.find((post) => post.target === 'C_ANNOUNCE');
@@ -293,7 +292,7 @@ describe('handleWebhook routing: the missing-transition fallback', () => {
 
     // Still recorded, still notified - the decision happened, only the move failed.
     expect(
-      harness.db.prepare('SELECT routed_to FROM triage_events').all(),
+      await rows(harness.db, 'SELECT routed_to FROM triage_events'),
     ).toEqual([{ routed_to: 'sprint' }]);
   });
 });
@@ -316,7 +315,7 @@ describe('handleWebhook: terminal statuses (SPEC 7)', () => {
       const toReporter = harness.posts.find((post) => post.target === 'C_BUGS');
       expect(toReporter?.text).toContain('Not enough information to reproduce.');
 
-      expect(harness.db.prepare('SELECT routed_to FROM triage_events').all()).toEqual([
+      expect(await rows(harness.db, 'SELECT routed_to FROM triage_events')).toEqual([
         { routed_to: 'closed' },
       ]);
     },
@@ -359,7 +358,7 @@ describe('handleWebhook idempotency (SPEC 7, Phase 3 acceptance)', () => {
     // Nothing further was sent, and nothing further was written to Jira.
     expect(harness.posts).toHaveLength(postsAfterFirst);
     expect(harness.jiraCalls).toHaveLength(callsAfterFirst);
-    expect(harness.db.prepare('SELECT COUNT(*) AS n FROM triage_events').get()).toEqual({ n: 1 });
+    expect(await countOf(harness.db, 'triage_events')).toBe(1);
   });
 
   it('a genuinely different change is still processed', async () => {
@@ -372,7 +371,7 @@ describe('handleWebhook idempotency (SPEC 7, Phase 3 acceptance)', () => {
       payload({ from: 'Under Triage', to: 'Rejected', changelogId: '9002' }),
     );
     expect(result.action).toBe('routed');
-    expect(harness.db.prepare('SELECT COUNT(*) AS n FROM triage_events').get()).toEqual({ n: 2 });
+    expect(await countOf(harness.db, 'triage_events')).toBe(2);
   });
 });
 
@@ -401,7 +400,7 @@ describe('handleWebhook: status-change DMs (SPEC 8)', () => {
   });
 
   it('says nothing when the reporter is unknown', async () => {
-    harness.repo.recordIssueReport({ issueKey: 'SUP-2', intakeSource: 'jira_native' });
+    await harness.repo.recordIssueReport({ issueKey: 'SUP-2', intakeSource: 'jira_native' });
     const result = await handleWebhook(
       harness.context,
       payload({ key: 'SUP-2', from: 'To Do', to: 'In Progress', changelogId: '5003' }),
@@ -425,7 +424,7 @@ describe('handleWebhook: Jira-native intake (SPEC 1, SPEC 4)', () => {
 
     expect(result.action).toBe('created');
 
-    const row = harness.repo.getIssueReport('SUP-50');
+    const row = await harness.repo.getIssueReport('SUP-50');
     expect(row?.intake_source).toBe('jira_native');
     expect(row?.slack_user_id).toBe('U_REPORTER');
 
@@ -448,7 +447,7 @@ describe('handleWebhook: Jira-native intake (SPEC 1, SPEC 4)', () => {
       }),
     );
 
-    const row = harness.repo.getIssueReport('SUP-51');
+    const row = await harness.repo.getIssueReport('SUP-51');
     expect(row).toBeDefined();
     expect(row?.slack_user_id).toBeNull();
     expect(

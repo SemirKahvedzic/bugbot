@@ -4,16 +4,16 @@ import { fixtureIssue, makeTestContext, type TestHarness } from './helpers/conte
 
 let harness: TestHarness;
 
-beforeEach(() => {
-  harness = makeTestContext({ SLACK_BOT_TOKEN: 'xoxb-test' });
+beforeEach(async () => {
+  harness = await makeTestContext({ SLACK_BOT_TOKEN: 'xoxb-test' });
   harness.issuesByKey.set('SUP-1', fixtureIssue({ key: 'SUP-1' }));
-  harness.repo.recordIssueReport({
+  await harness.repo.recordIssueReport({
     issueKey: 'SUP-1',
     slackUserId: 'U_REPORTER',
     slackChannelId: 'C_BUGS',
     intakeSource: 'slack_modal',
   });
-  harness.repo.setThread('SUP-1', 'C_BUGS', '111.222');
+  await harness.repo.setThread('SUP-1', 'C_BUGS', '111.222');
 });
 
 const png = { id: 'F1', name: 'screenshot.png', mimetype: 'image/png', size: 2048 };
@@ -95,7 +95,7 @@ describe('syncThreadFiles (SPEC 5, Phase 2)', () => {
     expect(result).toEqual({ attached: 0, skipped: 0 });
     expect(harness.jiraCalls).toHaveLength(0);
     // Nothing was even claimed, so a later real thread is unaffected.
-    expect(harness.repo.claimNotification('attach:SUP-1:F1')).toBe(true);
+    expect(await harness.repo.claimNotification('attach:SUP-1:F1')).toBe(true);
   });
 
   it('refuses a file larger than Jira will take, and says so in the thread', async () => {
@@ -117,7 +117,7 @@ describe('syncThreadFiles (SPEC 5, Phase 2)', () => {
   });
 
   it('claims each file once, so a redelivered event does not attach twice', async () => {
-    expect(harness.repo.claimNotification('attach:SUP-1:F1')).toBe(true);
+    expect(await harness.repo.claimNotification('attach:SUP-1:F1')).toBe(true);
 
     // The claim is already taken, as it would be on a redelivery.
     const result = await syncThreadFiles(harness.context, {
@@ -132,13 +132,13 @@ describe('syncThreadFiles (SPEC 5, Phase 2)', () => {
   });
 
   it('does nothing without a bot token instead of throwing', async () => {
-    const noToken = makeTestContext();
-    noToken.repo.recordIssueReport({
+    const noToken = await makeTestContext();
+    await noToken.repo.recordIssueReport({
       issueKey: 'SUP-1',
       slackChannelId: 'C_BUGS',
       intakeSource: 'slack_modal',
     });
-    noToken.repo.setThread('SUP-1', 'C_BUGS', '111.222');
+    await noToken.repo.setThread('SUP-1', 'C_BUGS', '111.222');
 
     const result = await syncThreadFiles(noToken.context, {
       channelId: 'C_BUGS',

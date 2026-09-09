@@ -1,5 +1,30 @@
-# Local/VPS run. `docker compose up --build` then curl localhost:3000/healthz
+# Local development stack. Vercel is the deployment target - this exists so the
+# app can be run end to end without one, and so the schema can be exercised
+# against a real Postgres rather than the in-memory one the tests use.
+#
+#   docker compose up --build
+#   curl localhost:3000/healthz
+#
+# The app reads DATABASE_URL from .env. To use this Postgres instead of Neon:
+#   DATABASE_URL=postgresql://bugbot:bugbot@localhost:5432/bugbot
 services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: bugbot
+      POSTGRES_PASSWORD: bugbot
+      POSTGRES_DB: bugbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - bugbot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bugbot -d bugbot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
   bugbot:
     build: .
     image: bugbot:local
@@ -7,13 +32,14 @@ services:
     env_file:
       - .env
     environment:
-      # Override .env so the DB lands on the mounted volume regardless of what
-      # DATABASE_PATH says for bare-metal runs.
-      DATABASE_PATH: /data/bugbot.db
+      # Point at the sibling container regardless of what .env says, so the
+      # local stack is self-contained.
+      DATABASE_URL: postgresql://bugbot:bugbot@postgres:5432/bugbot
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "3000:3000"
-    volumes:
-      - bugbot_data:/data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:3000/healthz"]
       interval: 30s
@@ -22,4 +48,4 @@ services:
       start_period: 20s
 
 volumes:
-  bugbot_data:
+  bugbot_pgdata:

@@ -63,7 +63,13 @@ export const configSchema = z.object({
   ESCALATION_MENTION: z.enum(['none', 'here', 'channel']).default('none'),
 
   // --- Runtime ---
-  DATABASE_PATH: z.string().min(1).default('/data/bugbot.db'),
+  /**
+   * Postgres connection string. On Vercel this must be the **pooled**
+   * connection string (Neon's `-pooler` host), or concurrent invocations
+   * exhaust the connection limit under any real load.
+   */
+  DATABASE_URL: z.string().url('must be a postgres:// connection string'),
+  DATABASE_POOL_MAX: z.coerce.number().int().positive().max(50).default(5),
   PORT: z.coerce.number().int().positive().default(3000),
   LOG_LEVEL: z
     .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])

@@ -10,8 +10,8 @@ out what happened. BugBot fixes four things:
 1. **Guided intake** — `/bug` opens a form that requires the fields QA actually needs.
 2. **One funnel** — every bug, however it arrives, lands in `Under Triage` with a normalised
    description and labels.
-3. **Assisted routing** — on leaving triage, low/medium go to the backlog, higher goes to the
-   active sprint and pings the team leader.
+3. **Assisted routing** — on leaving triage, low/medium go to the backlog; higher is labelled for
+   the work lane and pings the team leader.
 4. **Reporter self-service** — `/mybugs`, an App Home tab, and a DM when a bug changes status.
 
 **Non-goal:** replacing the official *Jira Cloud for Slack* app. That stays installed for
@@ -24,13 +24,14 @@ Full requirements live in `SPEC.md`. Section references below (`SPEC 7`) point t
 
 ## Status
 
-All phases are **built and unit tested** (255 tests). Nothing has yet been exercised against the
-real Slack workspace or a real Jira token — that needs credentials only the QA owner can create,
-and it is the next step. See *What is not verified yet*.
+All phases are **built and tested** — 273 unit tests plus 13 integration tests against the real
+Neon database. Nothing has yet been exercised against the real Slack workspace or a real Jira
+token; that needs credentials only the QA owner can create, and it is the next step. See *What is
+not verified yet*.
 
 | Phase | Scope | State |
 |---|---|---|
-| 0 | Skeleton, config, Jira client, DB, Docker/Fly, `npm run discover` | built |
+| 0 | Skeleton, config, Jira client, DB, Docker, `npm run discover` | built |
 | 1 | `/bug` modal → Jira issue in `Under Triage` + confirmation thread | built |
 | 2 | Thread attachment sync, "Report as bug" message shortcut | built |
 | 3 | Jira webhook, idempotency, routing matrix, `/triage` | built |
@@ -44,6 +45,9 @@ live services. Expect to work through these one at a time:
 
 - **No real Jira token has been used.** `npm run discover` has only been run with a deliberately
   invalid token, which proved the report's error handling but not the values.
+- **Never deployed to Vercel.** The database, migrations and the whole app boot are verified
+  against real Neon, and the app runs locally, but the serverless entry point has not been built
+  by Vercel yet. See *One thing to check on the first deploy*.
 - **No Slack app exists yet**, so no command, modal, shortcut, event or button has run for real.
 - **Whether `Under Triage` → `To Do` exists as a transition is unknown.** The workflow is
   restricted, not global (see below), and the backlog route depends on that transition. If it is
@@ -128,20 +132,24 @@ status names, never on board position.
 
 ## Prerequisites
 
-- **Node 24 or newer.** Required, not a preference: the database layer uses the built-in
-  `node:sqlite` module, which is only available from Node 22 (behind a flag) and stable from
-  Node 24. `.nvmrc` pins 24; the Docker image is `node:24-bookworm-slim`.
-- Docker, if you want to run it the way it is deployed.
+- **Node 24 or newer.** `.nvmrc` pins 24; the Docker image is `node:24-bookworm-slim`.
+- **A Postgres database.** Neon is what this is running on; Vercel Postgres and Supabase work
+  too. On Vercel you must use the **pooled** connection string.
 - A Jira API token for the service account (below).
-- `flyctl`, for deploying.
+- Docker, only if you want to run the whole thing locally without Vercel.
 
 ## Setup
 
 ```bash
-cp .env.example .env      # then fill in JIRA_EMAIL and JIRA_API_TOKEN
+cp .env.example .env      # fill in DATABASE_URL, JIRA_EMAIL, JIRA_API_TOKEN
 npm ci
+npm run migrate           # create the tables
 npm test
 ```
+
+`npm run migrate` is a deliberate step, not something the app does on boot: on Vercel several
+cold starts can begin at once, and a serverless function is the wrong place to be altering a
+schema. It takes a Postgres advisory lock, so running it twice at once is safe.
 
 ### The Jira service account
 
@@ -258,8 +266,10 @@ docker compose up --build
 curl localhost:3000/healthz
 ```
 
-The database lands on the `bugbot_data` volume at `/data/bugbot.db`. The container runs as the
-non-root `node` user and has its own `HEALTHCHECK`.
+This brings up a Postgres alongside the app and points the app at it, so the local stack is
+self-contained and needs no Neon. The container runs as the non-root `node` user and has its own
+`HEALTHCHECK`. It exists for local end-to-end runs and as a non-Vercel escape hatch — the
+deployment target is a Vercel function.
 
 ### Webhooks in local development
 
@@ -278,32 +288,67 @@ is usually simpler than maintaining both paths.
 
 ---
 
-## Deploying to Fly.io
+## Deploying to Vercel
+
+The whole service is one function. `vercel.json` rewrites every path to it, so `/slack/events`,
+`/jira/webhook/:secret`, `/healthz` and `/readyz` all arrive at `api/index.ts`.
 
 ```bash
-fly launch --no-deploy          # first time only; app name is in fly.toml
-fly volumes create bugbot_data --size 1 --region fra
-fly secrets set JIRA_EMAIL=... JIRA_API_TOKEN=... JIRA_WEBHOOK_SECRET=... \
-                SLACK_BOT_TOKEN=... SLACK_SIGNING_SECRET=...
-fly deploy
+vercel link                       # first time only
+vercel env add DATABASE_URL       # the POOLED connection string
+vercel env add JIRA_EMAIL
+vercel env add JIRA_API_TOKEN
+vercel env add JIRA_WEBHOOK_SECRET
+vercel env add SLACK_BOT_TOKEN
+vercel env add SLACK_SIGNING_SECRET
+vercel env add SLACK_DEFAULT_TRIAGER
+vercel env add SLACK_ANNOUNCE_CHANNEL
+vercel env add SLACK_DEV_CHANNEL
+npm run migrate                   # against the same DATABASE_URL, once
+vercel deploy --prod
 ```
 
-**Exactly one machine.** SQLite is a single file on a single volume, so never
-`fly scale count 2`. Two machines would each get their own database, and the `notifications`
-idempotency ledger would stop working — producing precisely the duplicate DMs it exists to
-prevent. `fly.toml` sets `min_machines_running = 1` and `auto_stop_machines = false`, because a
-stopped machine would miss Slack's three-second acknowledgement window and drop Jira deliveries
-outright.
+### What serverless changes, and why the code looks the way it does
 
-Backup is copying a file:
+Three things about Vercel shaped the design, and all three are places where a plausible-looking
+change would quietly break the service:
 
-```bash
-fly ssh console -C "sqlite3 /data/bugbot.db '.backup /data/backup.db'"   # consistent snapshot
-fly ssh sftp get /data/backup.db ./backups/bugbot-$(date +%F).db
-```
+**A function stops the moment its response is sent.** But Slack demands an acknowledgement inside
+three seconds, and filing a Jira issue takes longer than that. So every handler acks first and
+then hands the slow part to `keepAlive` (`src/runtime.ts`), which wraps Vercel's `waitUntil`. On a
+normal server the same call just lets the promise run. If you add a handler that does work after
+`ack()` without `keepAlive`, it will appear to work locally and silently do nothing in
+production.
 
-Prefer `.backup` over copying `bugbot.db` directly — with WAL enabled, a plain copy can catch a
-torn write.
+**The filesystem is ephemeral and per-instance**, which is why the database is Postgres rather
+than SQLite. The `notifications` table is what guarantees a redelivered webhook sends nothing
+twice; on a disappearing disk that guarantee disappears with it, and duplicate DMs are the one
+failure mode SPEC 7 singles out as trust-destroying.
+
+**Connections are the scarce resource.** Every warm instance holds a pool, so `DATABASE_URL` must
+be the pooled (`-pooler`) Neon host and `DATABASE_POOL_MAX` stays small. A direct connection
+string will work fine in testing and exhaust the limit under real load.
+
+The Jira preflight runs once per cold start, at module load, via a top-level `await` in
+`api/index.ts` — so no request is ever handled by a half-configured app. Warm invocations reuse
+it along with the pool. If it fails, the function serves 503 with the reason (not 500: Slack backs
+off on a 503 and stops trusting an endpoint that 500s), and the next cold start tries again.
+
+`maxDuration` is 60s in `vercel.json`. Background work registered with `waitUntil` is still
+bounded by it.
+
+### One thing to check on the first deploy
+
+`api/index.ts` imports `../src/app.js` — the NodeNext convention of writing `.js` for a `.ts`
+file. Vercel's builder normally resolves this, but it has never been deployed from this repo. If
+the build complains about a missing module, the fix is to compile ahead of time (`npm run build`
+as the build command) and import from `dist/` instead. Everything else here has been exercised
+locally.
+
+### Backups
+
+Neon takes care of this: point-in-time restore is on by default, and a branch is a cheap
+snapshot. Nothing in this repo needs a backup script.
 
 ---
 
@@ -376,7 +421,7 @@ To check it end to end: move a bug out of `Under Triage` in Jira and watch the l
   loop guard drops any change made by the service account itself — without it BugBot would
   respond to its own writes.
 - **Secrets come from the environment only.** `.env` is gitignored; `.env.example` carries empty
-  values. On Fly they are `fly secrets`.
+  values. On Vercel they are project environment variables (`vercel env add`).
 - **Logs are redacted by default.** `src/logger.ts` censors tokens, `authorization` headers,
   email addresses and message/DM text, at the top level and one level deep. `test/logger.test.ts`
   asserts a token and an email cannot reach the output.
@@ -437,8 +482,12 @@ median time in triage and the top three reporters. `/bugstats post` shares it in
 ## Layout
 
 ```
+api/
+  index.ts                    Vercel entry point: exports the express app, no listen()
 src/
-  index.ts                    Bootstrap: config, DB, HTTP, then Jira preflight and wiring
+  app.ts                      bootstrap(): builds everything without starting a server
+  index.ts                    Standalone server for local development and Docker
+  runtime.ts                  keepAlive(): waitUntil on Vercel, plain promise elsewhere
   config.ts                   zod-validated env; exits on invalid config
   context.ts                  the dependency bundle every handler receives
   logger.ts                   pino with the redaction list
@@ -471,24 +520,33 @@ src/
     description.ts            the one description template, shared by both paths
     slackBlocks.ts            Block Kit builders, pure
   db/
-    index.ts, repo.ts, migrations/
+    index.ts                  the Db interface, the pg pool, toCount
+    migrate.ts                migration runner, with the advisory lock
+    repo.ts                   every SQL statement
+    migrations/
 scripts/
   discover.ts                 dump every Jira ID (npm run discover)
+  migrate.ts                  npm run migrate
   manifest.json               Slack app manifest, ready to paste
 config/
   leaders.example.json        per-application team leader map (SPEC 9.2)
 test/                         vitest; HTTP mocked with msw, effects via a recording harness
+  integration/                against real Postgres; npm run test:integration
+vercel.json                   rewrites every path to the one function
 ```
 
 ### Choices worth knowing about
 
-- **`node:sqlite`, not `better-sqlite3`.** `SPEC.md` §3 asked for `better-sqlite3`. It is a
-  native module with no prebuilt binary for the Node version on the dev machine, so installing it
-  required a node-gyp toolchain (Python plus Visual Studio build tools) that was not present and
-  is a poor thing to require of a one-person project. `node:sqlite` is the same embedded SQLite,
-  built into Node, with no compile step — which also removed the build toolchain from the Docker
-  image. What the spec actually wanted is unchanged: one small file, backed up by copying, all
-  SQL confined to `src/db/`.
+- **Postgres, not SQLite.** `SPEC.md` §3 asked for `better-sqlite3`, on the assumption of a
+  single long-lived node. Two things moved it: `better-sqlite3` is a native module with no
+  prebuilt binary for the Node on the dev machine, so it needed a node-gyp toolchain that was not
+  there; and then the deployment target became Vercel, where the filesystem is ephemeral and
+  per-instance, which makes any local file useless for the `notifications` ledger. What the spec
+  actually wanted is unchanged: all SQL confined to `src/db/`, which is exactly what made this
+  swap a contained one.
+- **The `Db` interface in `src/db/index.ts`.** Three methods — `query`, `transaction`, `close`.
+  The repository layer knows nothing about `pg`, which is what lets the tests hand it pg-mem and
+  exercise the shipping implementation rather than a lookalike.
 - **Global `fetch`, not `undici.request`.** Node's `fetch` *is* undici. `undici.request` bypasses
   the interceptors msw installs, so it cannot be mocked in tests without a second HTTP mocking
   library.
@@ -505,11 +563,33 @@ test/                         vitest; HTTP mocked with msw, effects via a record
 ## Tests
 
 ```bash
-npm test          # vitest run
+npm test              # 273 unit tests, offline, in-memory Postgres
+npm run test:integration   # 13 tests against the real database
 npm run typecheck
 ```
 
-255 tests. The ones worth knowing about:
+The unit suite runs against **pg-mem**, an in-memory Postgres, so it needs no database, no Docker
+and no network. The integration suite runs against whatever `TEST_DATABASE_URL` (or
+`DATABASE_URL`) points at, serially, and deletes every row it writes — safe to point at the same
+database the app uses.
+
+The split is not arbitrary. pg-mem does not implement everything, and two of its gaps sit exactly
+on top of the guarantees that matter most here, so those are verified against real Postgres
+instead:
+
+- **It does not honour ROLLBACK** through the pool adapter — a row inserted in a transaction
+  survives a rollback. Migration atomicity depends on rollback, so that is an integration test.
+- **It reports `rowCount: 1` for a targeted `ON CONFLICT (col) DO NOTHING`** even when nothing
+  was inserted. That is the exact mechanism behind "a redelivered webhook sends nothing twice".
+  The code now uses the untargeted `ON CONFLICT DO NOTHING` — identical behaviour on Postgres for
+  a table whose only constraint is its primary key, and it makes the offline suite able to check
+  the guarantee at all. The integration suite then proves it properly: **twelve concurrent claims,
+  exactly one winner.**
+
+Where pg-mem's limits are worked around, the comment says so and names the integration test that
+covers it — rather than leaving a test that passes for the wrong reason.
+
+The ones worth knowing about:
 
 - **`suggest.test.ts`** transcribes the SPEC 6 matrix independently of the implementation and
   checks all twelve cells, plus that the table is monotonic in both directions — a rarer or less
@@ -523,8 +603,11 @@ npm run typecheck
 - **`triageButtons.test.ts`** proves the buttons produce the same Jira calls, Slack messages and
   audit rows as the webhook path, and that a double click is one action.
 - **`repo.test.ts`** covers the idempotency ledger and the five-minute digest window directly.
+- **`integration/postgres.test.ts`** covers rollback, the idempotency claim under genuine
+  concurrency, the digest window, and that `COUNT(*)` comes back as a number rather than the
+  string Postgres actually sends.
 
-Two real bugs were found by these tests rather than in production:
+Three real bugs were found by these tests rather than in production:
 
 1. The viewport pattern rejected `800 X 600` — a capital X is something people type.
 2. Jira's changelog has a field literally named `toString`, which collides with
@@ -532,3 +615,6 @@ Two real bugs were found by these tests rather than in production:
    the inherited *function*, zod rejected it as "expected string, received function", and the
    entire webhook payload was dropped. `src/jira/webhook.ts` now rebuilds each changelog item on
    a null prototype.
+3. `claimDigest` was written as a conditional upsert (`ON CONFLICT DO UPDATE ... WHERE`). Correct
+   on Postgres, but untestable on pg-mem, which ignores the `WHERE`. Rewritten as two statements
+   that are each atomic on their own — portable, and provably correct under concurrency.

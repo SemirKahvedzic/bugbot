@@ -10,6 +10,7 @@ import {
 
 /** The smallest env that should boot: the Jira block plus Slack identifiers. */
 const baseEnv = {
+  DATABASE_URL: 'postgresql://user:pass@host.neon.tech/neondb?sslmode=require',
   JIRA_BASE_URL: 'https://roarington.atlassian.net',
   JIRA_CLOUD_ID: '57de5553-0941-4346-821f-c46f7dde06cc',
   JIRA_EMAIL: 'bugbot@roarington.com',
@@ -23,6 +24,7 @@ const baseEnv = {
 describe('loadConfig', () => {
   it('applies the documented defaults', () => {
     const config = loadConfig({ ...baseEnv });
+    expect(config.DATABASE_POOL_MAX).toBe(5);
     expect(config.JIRA_PROJECT_KEY).toBe('SUP');
     expect(config.JIRA_ISSUE_TYPE).toBe('Finding');
     expect(config.JIRA_STATUS_TRIAGE).toBe('Under Triage');
@@ -58,6 +60,12 @@ describe('loadConfig', () => {
   it('treats an empty allowlist as "allow anywhere"', () => {
     const config = loadConfig({ ...baseEnv, SLACK_BUG_CHANNEL_ALLOWLIST: '' });
     expect(config.SLACK_BUG_CHANNEL_ALLOWLIST).toEqual([]);
+  });
+
+  it('rejects a missing database URL - there is nowhere to record anything', () => {
+    const env = { ...baseEnv } as Record<string, string | undefined>;
+    delete env.DATABASE_URL;
+    expect(() => loadConfig(env)).toThrow(z.ZodError);
   });
 
   it('rejects a missing API token', () => {

@@ -1,164 +1,178 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { openDatabase, type Db } from '../src/db/index.js';
 import { Repo } from '../src/db/repo.js';
+import type { Db } from '../src/db/index.js';
+import { countOf, makeTestDb, rows } from './helpers/db.js';
 
 let db: Db;
 let repo: Repo;
 
-beforeEach(() => {
-  db = openDatabase({ path: ':memory:' });
+beforeEach(async () => {
+  db = await makeTestDb();
   repo = new Repo(db);
 });
 
 describe('issue_reports', () => {
-  it('records and reads back a Slack-filed bug', () => {
-    repo.recordIssueReport({
+  it('records and reads back a Slack-filed bug', async () => {
+    await repo.recordIssueReport({
       issueKey: 'SUP-10',
       slackUserId: 'U1',
       slackChannelId: 'C1',
       intakeSource: 'slack_modal',
     });
 
-    const row = repo.getIssueReport('SUP-10');
+    const row = await repo.getIssueReport('SUP-10');
     expect(row?.slack_user_id).toBe('U1');
     expect(row?.slack_channel_id).toBe('C1');
     expect(row?.intake_source).toBe('slack_modal');
     expect(row?.created_at).toBeTruthy();
   });
 
-  it('records a Jira-native bug with no Slack identity', () => {
-    repo.recordIssueReport({ issueKey: 'SUP-11', intakeSource: 'jira_native' });
-    const row = repo.getIssueReport('SUP-11');
+  it('records a Jira-native bug with no Slack identity', async () => {
+    await repo.recordIssueReport({ issueKey: 'SUP-11', intakeSource: 'jira_native' });
+    const row = await repo.getIssueReport('SUP-11');
     expect(row?.slack_user_id).toBeNull();
     expect(row?.intake_source).toBe('jira_native');
   });
 
-  it('is safe to record twice - a webhook replay must not fail or wipe data', () => {
-    repo.recordIssueReport({
+  it('is safe to record twice - a webhook replay must not fail or wipe data', async () => {
+    await repo.recordIssueReport({
       issueKey: 'SUP-12',
       slackUserId: 'U1',
       slackChannelId: 'C1',
       intakeSource: 'slack_modal',
     });
-    repo.setThread('SUP-12', 'C1', '111.222');
+    await repo.setThread('SUP-12', 'C1', '111.222');
 
-    // A later record with less information must not erase what we know.
-    repo.recordIssueReport({ issueKey: 'SUP-12', intakeSource: 'jira_native' });
+    // A later write with less information must not erase what we know.
+    await repo.recordIssueReport({ issueKey: 'SUP-12', intakeSource: 'jira_native' });
 
-    const row = repo.getIssueReport('SUP-12');
+    const row = await repo.getIssueReport('SUP-12');
     expect(row?.slack_user_id).toBe('U1');
     expect(row?.slack_thread_ts).toBe('111.222');
+    expect(await countOf(db, 'issue_reports')).toBe(1);
   });
 
-  it('backfills the Slack user on a bug first seen from Jira', () => {
-    repo.recordIssueReport({ issueKey: 'SUP-13', intakeSource: 'jira_native' });
-    repo.recordIssueReport({ issueKey: 'SUP-13', slackUserId: 'U9', intakeSource: 'jira_native' });
-    expect(repo.getIssueReport('SUP-13')?.slack_user_id).toBe('U9');
+  it('backfills the Slack user on a bug first seen from Jira', async () => {
+    await repo.recordIssueReport({ issueKey: 'SUP-13', intakeSource: 'jira_native' });
+    await repo.recordIssueReport({
+      issueKey: 'SUP-13',
+      slackUserId: 'U9',
+      intakeSource: 'jira_native',
+    });
+    expect((await repo.getIssueReport('SUP-13'))?.slack_user_id).toBe('U9');
   });
 
-  it('finds the issue that owns a Slack thread', () => {
-    repo.recordIssueReport({ issueKey: 'SUP-14', slackChannelId: 'C1', intakeSource: 'slack_modal' });
-    repo.setThread('SUP-14', 'C1', '999.000');
+  it('finds the issue that owns a Slack thread', async () => {
+    await repo.recordIssueReport({
+      issueKey: 'SUP-14',
+      slackChannelId: 'C1',
+      intakeSource: 'slack_modal',
+    });
+    await repo.setThread('SUP-14', 'C1', '999.000');
 
-    expect(repo.findByThread('C1', '999.000')?.issue_key).toBe('SUP-14');
-    expect(repo.findByThread('C1', 'other')).toBeUndefined();
-    expect(repo.findByThread('C2', '999.000')).toBeUndefined();
+    expect((await repo.findByThread('C1', '999.000'))?.issue_key).toBe('SUP-14');
+    expect(await repo.findByThread('C1', 'other')).toBeUndefined();
+    expect(await repo.findByThread('C2', '999.000')).toBeUndefined();
   });
 
-  it('lists a reporter\'s issue keys, newest first', () => {
+  it("lists a reporter's issue keys, newest first", async () => {
     for (const key of ['SUP-1', 'SUP-2', 'SUP-3']) {
-      repo.recordIssueReport({ issueKey: key, slackUserId: 'U1', intakeSource: 'slack_modal' });
+      await repo.recordIssueReport({ issueKey: key, slackUserId: 'U1', intakeSource: 'slack_modal' });
       // created_at has second-ish resolution; nudge the order explicitly.
-      db.prepare('UPDATE issue_reports SET created_at = ? WHERE issue_key = ?').run(
+      await db.query('UPDATE issue_reports SET created_at = $1 WHERE issue_key = $2', [
         `2026-09-0${key.split('-')[1]}T00:00:00Z`,
         key,
-      );
+      ]);
     }
-    repo.recordIssueReport({ issueKey: 'SUP-9', slackUserId: 'U2', intakeSource: 'slack_modal' });
+    await repo.recordIssueReport({ issueKey: 'SUP-9', slackUserId: 'U2', intakeSource: 'slack_modal' });
 
-    expect(repo.issueKeysForSlackUser('U1')).toEqual(['SUP-3', 'SUP-2', 'SUP-1']);
-    expect(repo.issueKeysForSlackUser('U2')).toEqual(['SUP-9']);
-    expect(repo.issueKeysForSlackUser('U1', 2)).toEqual(['SUP-3', 'SUP-2']);
+    expect(await repo.issueKeysForSlackUser('U1')).toEqual(['SUP-3', 'SUP-2', 'SUP-1']);
+    expect(await repo.issueKeysForSlackUser('U2')).toEqual(['SUP-9']);
+    expect(await repo.issueKeysForSlackUser('U1', 2)).toEqual(['SUP-3', 'SUP-2']);
   });
 });
 
 describe('user_map', () => {
-  it('caches an identity and merges later partial updates', () => {
-    repo.upsertUserMap({ slackUserId: 'U1', email: 'a@roarington.com' });
-    expect(repo.userBySlackId('U1')?.jira_account_id).toBeNull();
+  it('caches an identity and merges later partial updates', async () => {
+    await repo.upsertUserMap({ slackUserId: 'U1', email: 'a@roarington.com' });
+    expect((await repo.userBySlackId('U1'))?.jira_account_id).toBeNull();
 
-    repo.upsertUserMap({ slackUserId: 'U1', jiraAccountId: 'acc-1' });
+    await repo.upsertUserMap({ slackUserId: 'U1', jiraAccountId: 'acc-1' });
 
-    const row = repo.userBySlackId('U1');
+    const row = await repo.userBySlackId('U1');
     expect(row?.email).toBe('a@roarington.com');
     expect(row?.jira_account_id).toBe('acc-1');
   });
 
-  it('looks up by Jira account and by email, case-insensitively', () => {
-    repo.upsertUserMap({ slackUserId: 'U1', jiraAccountId: 'acc-1', email: 'A@Roarington.com' });
-    expect(repo.userByJiraAccountId('acc-1')?.slack_user_id).toBe('U1');
-    expect(repo.userByEmail('a@roarington.com')?.slack_user_id).toBe('U1');
-    expect(repo.userByEmail('nobody@roarington.com')).toBeUndefined();
+  it('looks up by Jira account and by email, case-insensitively', async () => {
+    await repo.upsertUserMap({
+      slackUserId: 'U1',
+      jiraAccountId: 'acc-1',
+      email: 'A@Roarington.com',
+    });
+    expect((await repo.userByJiraAccountId('acc-1'))?.slack_user_id).toBe('U1');
+    expect((await repo.userByEmail('a@roarington.com'))?.slack_user_id).toBe('U1');
+    expect(await repo.userByEmail('nobody@roarington.com')).toBeUndefined();
   });
 });
 
 describe('notifications: idempotency (SPEC 7)', () => {
-  it('claims a key exactly once', () => {
-    expect(repo.claimNotification('route:SUP-1:900')).toBe(true);
-    expect(repo.claimNotification('route:SUP-1:900')).toBe(false);
-    expect(repo.claimNotification('route:SUP-1:900')).toBe(false);
+  it('claims a key exactly once', async () => {
+    expect(await repo.claimNotification('route:SUP-1:900')).toBe(true);
+    expect(await repo.claimNotification('route:SUP-1:900')).toBe(false);
+    expect(await repo.claimNotification('route:SUP-1:900')).toBe(false);
   });
 
-  it('treats different changes as different claims', () => {
-    expect(repo.claimNotification('route:SUP-1:900')).toBe(true);
-    expect(repo.claimNotification('route:SUP-1:901')).toBe(true);
-    expect(repo.claimNotification('route:SUP-2:900')).toBe(true);
+  it('treats different changes as different claims', async () => {
+    expect(await repo.claimNotification('route:SUP-1:900')).toBe(true);
+    expect(await repo.claimNotification('route:SUP-1:901')).toBe(true);
+    expect(await repo.claimNotification('route:SUP-2:900')).toBe(true);
   });
 
-  it('prunes only old rows', () => {
-    repo.claimNotification('old');
-    repo.claimNotification('new');
-    db.prepare('UPDATE notifications SET sent_at = ? WHERE dedupe_key = ?').run(
+  it('prunes only old rows', async () => {
+    await repo.claimNotification('old');
+    await repo.claimNotification('new');
+    await db.query('UPDATE notifications SET sent_at = $1 WHERE dedupe_key = $2', [
       '2020-01-01T00:00:00Z',
       'old',
-    );
+    ]);
 
-    expect(repo.pruneNotifications(30)).toBe(1);
-    expect(repo.claimNotification('new')).toBe(false);
-    expect(repo.claimNotification('old')).toBe(true);
+    expect(await repo.pruneNotifications(30)).toBe(1);
+    expect(await repo.claimNotification('new')).toBe(false);
+    expect(await repo.claimNotification('old')).toBe(true);
   });
 });
 
 describe('notifications: digest window (SPEC 8)', () => {
-  it('sends once, then suppresses inside the window', () => {
-    expect(repo.claimDigest('digest:SUP-1', 300_000)).toBe(true);
-    expect(repo.claimDigest('digest:SUP-1', 300_000)).toBe(false);
+  it('sends once, then suppresses inside the window', async () => {
+    expect(await repo.claimDigest('digest:SUP-1', 300_000)).toBe(true);
+    expect(await repo.claimDigest('digest:SUP-1', 300_000)).toBe(false);
   });
 
-  it('sends again once the window has passed', () => {
-    expect(repo.claimDigest('digest:SUP-1', 300_000)).toBe(true);
+  it('sends again once the window has passed', async () => {
+    expect(await repo.claimDigest('digest:SUP-1', 300_000)).toBe(true);
 
-    db.prepare('UPDATE notifications SET sent_at = ? WHERE dedupe_key = ?').run(
+    await db.query('UPDATE notifications SET sent_at = $1 WHERE dedupe_key = $2', [
       new Date(Date.now() - 600_000).toISOString(),
       'digest:SUP-1',
-    );
+    ]);
 
-    expect(repo.claimDigest('digest:SUP-1', 300_000)).toBe(true);
+    expect(await repo.claimDigest('digest:SUP-1', 300_000)).toBe(true);
     // ...and the clock restarts.
-    expect(repo.claimDigest('digest:SUP-1', 300_000)).toBe(false);
+    expect(await repo.claimDigest('digest:SUP-1', 300_000)).toBe(false);
   });
 
-  it('keeps issues independent', () => {
-    expect(repo.claimDigest('digest:SUP-1', 300_000)).toBe(true);
-    expect(repo.claimDigest('digest:SUP-2', 300_000)).toBe(true);
+  it('keeps issues independent', async () => {
+    expect(await repo.claimDigest('digest:SUP-1', 300_000)).toBe(true);
+    expect(await repo.claimDigest('digest:SUP-2', 300_000)).toBe(true);
   });
 });
 
 describe('triage_events and metrics (SPEC 8)', () => {
   const since = '2026-01-01T00:00:00Z';
 
-  it('records a routing decision', () => {
-    repo.recordTriageEvent({
+  it('records a routing decision', async () => {
+    await repo.recordTriageEvent({
       issueKey: 'SUP-1',
       fromStatus: 'Under Triage',
       toStatus: 'To Do',
@@ -167,86 +181,90 @@ describe('triage_events and metrics (SPEC 8)', () => {
       actorAccountId: 'acc-1',
     });
 
-    const rows = repo.routingSplitSince(since);
-    expect(rows).toEqual([{ routed_to: 'sprint', count: 1 }]);
+    expect(await repo.routingSplitSince(since)).toEqual([{ routed_to: 'sprint', count: 1 }]);
   });
 
-  it('splits backlog from sprint, which is why routed_to survived the Kanban change', () => {
-    repo.recordTriageEvent({ issueKey: 'SUP-1', routedTo: 'backlog' });
-    repo.recordTriageEvent({ issueKey: 'SUP-2', routedTo: 'backlog' });
-    repo.recordTriageEvent({ issueKey: 'SUP-3', routedTo: 'sprint' });
+  it('splits backlog from sprint, which is why routed_to survived the Kanban change', async () => {
+    await repo.recordTriageEvent({ issueKey: 'SUP-1', routedTo: 'backlog' });
+    await repo.recordTriageEvent({ issueKey: 'SUP-2', routedTo: 'backlog' });
+    await repo.recordTriageEvent({ issueKey: 'SUP-3', routedTo: 'sprint' });
 
-    expect(repo.routingSplitSince(since)).toEqual([
+    expect(await repo.routingSplitSince(since)).toEqual([
       { routed_to: 'backlog', count: 2 },
       { routed_to: 'sprint', count: 1 },
     ]);
   });
 
-  it('counts intake by source', () => {
-    repo.recordIssueReport({ issueKey: 'SUP-1', intakeSource: 'slack_modal' });
-    repo.recordIssueReport({ issueKey: 'SUP-2', intakeSource: 'slack_modal' });
-    repo.recordIssueReport({ issueKey: 'SUP-3', intakeSource: 'jira_native' });
+  it('counts intake by source', async () => {
+    await repo.recordIssueReport({ issueKey: 'SUP-1', intakeSource: 'slack_modal' });
+    await repo.recordIssueReport({ issueKey: 'SUP-2', intakeSource: 'slack_modal' });
+    await repo.recordIssueReport({ issueKey: 'SUP-3', intakeSource: 'jira_native' });
 
-    expect(repo.intakeSince(since)).toEqual([
+    expect(await repo.intakeSince(since)).toEqual([
       { intake_source: 'slack_modal', count: 2 },
       { intake_source: 'jira_native', count: 1 },
     ]);
   });
 
-  it('ranks the top reporters and ignores unknown ones', () => {
-    repo.recordIssueReport({ issueKey: 'SUP-1', slackUserId: 'U1', intakeSource: 'slack_modal' });
-    repo.recordIssueReport({ issueKey: 'SUP-2', slackUserId: 'U1', intakeSource: 'slack_modal' });
-    repo.recordIssueReport({ issueKey: 'SUP-3', slackUserId: 'U2', intakeSource: 'slack_modal' });
-    repo.recordIssueReport({ issueKey: 'SUP-4', intakeSource: 'jira_native' });
+  it('ranks the top reporters and ignores unknown ones', async () => {
+    await repo.recordIssueReport({ issueKey: 'SUP-1', slackUserId: 'U1', intakeSource: 'slack_modal' });
+    await repo.recordIssueReport({ issueKey: 'SUP-2', slackUserId: 'U1', intakeSource: 'slack_modal' });
+    await repo.recordIssueReport({ issueKey: 'SUP-3', slackUserId: 'U2', intakeSource: 'slack_modal' });
+    await repo.recordIssueReport({ issueKey: 'SUP-4', intakeSource: 'jira_native' });
 
-    expect(repo.topReportersSince(since, 3)).toEqual([
+    expect(await repo.topReportersSince(since, 3)).toEqual([
       { slack_user_id: 'U1', count: 2 },
       { slack_user_id: 'U2', count: 1 },
     ]);
   });
 
-  it('computes the median time in triage', () => {
+  it('computes the median time in triage', async () => {
     // Two issues: one triaged after 1h, one after 3h. Median of two = 2h.
-    repo.recordIssueReport({ issueKey: 'SUP-1', intakeSource: 'slack_modal' });
-    repo.recordIssueReport({ issueKey: 'SUP-2', intakeSource: 'slack_modal' });
-    db.prepare('UPDATE issue_reports SET created_at = ? WHERE issue_key = ?').run(
-      '2026-02-01T00:00:00Z',
-      'SUP-1',
-    );
-    db.prepare('UPDATE issue_reports SET created_at = ? WHERE issue_key = ?').run(
-      '2026-02-01T00:00:00Z',
-      'SUP-2',
-    );
+    for (const key of ['SUP-1', 'SUP-2']) {
+      await repo.recordIssueReport({ issueKey: key, intakeSource: 'slack_modal' });
+      await db.query('UPDATE issue_reports SET created_at = $1 WHERE issue_key = $2', [
+        '2026-02-01T00:00:00Z',
+        key,
+      ]);
+    }
 
-    repo.recordTriageEvent({ issueKey: 'SUP-1', routedTo: 'backlog' });
-    repo.recordTriageEvent({ issueKey: 'SUP-2', routedTo: 'sprint' });
-    db.prepare('UPDATE triage_events SET at = ? WHERE issue_key = ?').run(
+    await repo.recordTriageEvent({ issueKey: 'SUP-1', routedTo: 'backlog' });
+    await repo.recordTriageEvent({ issueKey: 'SUP-2', routedTo: 'sprint' });
+    await db.query('UPDATE triage_events SET at = $1 WHERE issue_key = $2', [
       '2026-02-01T01:00:00Z',
       'SUP-1',
-    );
-    db.prepare('UPDATE triage_events SET at = ? WHERE issue_key = ?').run(
+    ]);
+    await db.query('UPDATE triage_events SET at = $1 WHERE issue_key = $2', [
       '2026-02-01T03:00:00Z',
       'SUP-2',
-    );
+    ]);
 
-    expect(repo.medianTimeInTriageMs(since)).toBe(2 * 3600 * 1000);
+    expect(await repo.medianTimeInTriageMs(since)).toBe(2 * 3600 * 1000);
   });
 
-  it('returns no median when nothing was triaged', () => {
-    expect(repo.medianTimeInTriageMs(since)).toBeUndefined();
+  it('returns no median when nothing was triaged', async () => {
+    expect(await repo.medianTimeInTriageMs(since)).toBeUndefined();
   });
 
-  it('uses the first triage event, not a later one, for an issue triaged twice', () => {
-    repo.recordIssueReport({ issueKey: 'SUP-1', intakeSource: 'slack_modal' });
-    db.prepare('UPDATE issue_reports SET created_at = ? WHERE issue_key = ?').run(
+  it('uses the first triage event, not a later one, for an issue triaged twice', async () => {
+    await repo.recordIssueReport({ issueKey: 'SUP-1', intakeSource: 'slack_modal' });
+    await db.query('UPDATE issue_reports SET created_at = $1 WHERE issue_key = $2', [
       '2026-02-01T00:00:00Z',
       'SUP-1',
-    );
-    repo.recordTriageEvent({ issueKey: 'SUP-1', routedTo: 'backlog' });
-    repo.recordTriageEvent({ issueKey: 'SUP-1', routedTo: 'sprint' });
-    db.prepare("UPDATE triage_events SET at = '2026-02-01T01:00:00Z' WHERE id = 1").run();
-    db.prepare("UPDATE triage_events SET at = '2026-02-05T00:00:00Z' WHERE id = 2").run();
+    ]);
+    await repo.recordTriageEvent({ issueKey: 'SUP-1', routedTo: 'backlog' });
+    await repo.recordTriageEvent({ issueKey: 'SUP-1', routedTo: 'sprint' });
 
-    expect(repo.medianTimeInTriageMs(since)).toBe(3600 * 1000);
+    const ids = await rows<{ id: number }>(db, 'SELECT id FROM triage_events ORDER BY id');
+    await db.query('UPDATE triage_events SET at = $1 WHERE id = $2', [
+      '2026-02-01T01:00:00Z',
+      ids[0]!.id,
+    ]);
+    await db.query('UPDATE triage_events SET at = $1 WHERE id = $2', [
+      '2026-02-05T00:00:00Z',
+      ids[1]!.id,
+    ]);
+
+    expect(await repo.medianTimeInTriageMs(since)).toBe(3600 * 1000);
   });
 });

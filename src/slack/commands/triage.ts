@@ -12,6 +12,7 @@ import type { App } from '@slack/bolt';
 import { issueUrl, triageQueueBlocks } from '../../format/slackBlocks.js';
 import { applyRoute } from '../../triage/apply.js';
 import { decideRoute } from '../../triage/route.js';
+import { keepAlive } from '../../runtime.js';
 import { ACTION, COMMAND } from '../actions.js';
 import { toSummaryLine } from './mybugs.js';
 import type { BugbotContext } from '../../context.js';
@@ -69,27 +70,34 @@ export function registerTriageCommand(app: App, context: BugbotContext): void {
       return;
     }
 
-    try {
-      const issues = await loadTriageQueue(context);
-      await respond({
-        response_type: 'ephemeral',
-        text: `${issues.length} bug(s) awaiting triage.`,
-        blocks: triageQueueBlocks({
-          baseUrl: config.JIRA_BASE_URL,
-          issues,
-          triageStatusName: config.JIRA_STATUS_TRIAGE,
-        }),
-      });
-    } catch (error) {
-      log.error(
-        { err: error instanceof Error ? error.message : String(error) },
-        'could not load the triage queue',
-      );
-      await respond({
-        response_type: 'ephemeral',
-        text: 'I could not read the triage queue from Jira. Check `/readyz`.',
-      });
-    }
+    // A Jira search can outlast Slack's three second budget, so the queue is
+    // built after the ack and delivered through response_url.
+    keepAlive(
+      (async () => {
+        try {
+          const issues = await loadTriageQueue(context);
+          await respond({
+            response_type: 'ephemeral',
+            text: `${issues.length} bug(s) awaiting triage.`,
+            blocks: triageQueueBlocks({
+              baseUrl: config.JIRA_BASE_URL,
+              issues,
+              triageStatusName: config.JIRA_STATUS_TRIAGE,
+            }),
+          });
+        } catch (error) {
+          log.error(
+            { err: error instanceof Error ? error.message : String(error) },
+            'could not load the triage queue',
+          );
+          await respond({
+            response_type: 'ephemeral',
+            text: 'I could not read the triage queue from Jira. Check `/readyz`.',
+          });
+        }
+      })(),
+      'triageQueue',
+    );
   });
 
   // --- The four queue buttons ---------------------------------------------
@@ -111,22 +119,30 @@ export function registerTriageCommand(app: App, context: BugbotContext): void {
         return;
       }
 
-      try {
-        const message = await runTriageButton(context, {
-          actionId,
-          issueKey,
-          actorSlackId: body.user.id,
-        });
-        await respond({ response_type: 'ephemeral', replace_original: false, text: message });
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        log.error({ issueKey, actionId, err: detail }, 'triage button failed');
-        await respond({
-          response_type: 'ephemeral',
-          replace_original: false,
-          text: `:x: ${issueKey}: ${detail}`,
-        });
-      }
+      // Routing means several Jira calls and several Slack messages, far past
+      // the three second budget, so it happens after the ack and reports back
+      // through response_url.
+      keepAlive(
+        (async () => {
+          try {
+            const message = await runTriageButton(context, {
+              actionId,
+              issueKey,
+              actorSlackId: body.user.id,
+            });
+            await respond({ response_type: 'ephemeral', replace_original: false, text: message });
+          } catch (error) {
+            const detail = error instanceof Error ? error.message : String(error);
+            log.error({ issueKey, actionId, err: detail }, 'triage button failed');
+            await respond({
+              response_type: 'ephemeral',
+              replace_original: false,
+              text: `:x: ${issueKey}: ${detail}`,
+            });
+          }
+        })(),
+        `triageButton:${actionId}`,
+      );
     });
   }
 
@@ -137,21 +153,26 @@ export function registerTriageCommand(app: App, context: BugbotContext): void {
     const issueKey = (action as { value?: string }).value;
     if (!issueKey) return;
 
-    try {
-      await context.issues.removeLabels(issueKey, ['needs-lead-review']);
-      log.info({ issueKey, actor: body.user.id }, 'lead approved a routed bug');
-      await respond({
-        response_type: 'ephemeral',
-        replace_original: false,
-        text: `:white_check_mark: ${issueKey} approved — \`needs-lead-review\` removed.`,
-      });
-    } catch (error) {
-      await respond({
-        response_type: 'ephemeral',
-        replace_original: false,
-        text: `:x: Could not update ${issueKey}: ${error instanceof Error ? error.message : String(error)}`,
-      });
-    }
+    keepAlive(
+      (async () => {
+        try {
+          await context.issues.removeLabels(issueKey, ['needs-lead-review']);
+          log.info({ issueKey, actor: body.user.id }, 'lead approved a routed bug');
+          await respond({
+            response_type: 'ephemeral',
+            replace_original: false,
+            text: `:white_check_mark: ${issueKey} approved — \`needs-lead-review\` removed.`,
+          });
+        } catch (error) {
+          await respond({
+            response_type: 'ephemeral',
+            replace_original: false,
+            text: `:x: Could not update ${issueKey}: ${error instanceof Error ? error.message : String(error)}`,
+          });
+        }
+      })(),
+      'leaderApprove',
+    );
   });
 
   app.action(ACTION.leaderReassign, async ({ ack, body, action, client }) => {
@@ -283,7 +304,7 @@ export async function runTriageButton(
   // reporter is asked for what is missing.
   if (actionId === ACTION.triageNeedInfo) {
     await issues.addLabels(issueKey, ['needs-info']);
-    const report = repo.getIssueReport(issueKey);
+    const report = await repo.getIssueReport(issueKey);
 
     if (report?.slack_channel_id && report.slack_thread_ts) {
       await notifier.post({
