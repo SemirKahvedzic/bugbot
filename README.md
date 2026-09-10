@@ -110,6 +110,10 @@ Covered by unit tests, but never exercised against the live services:
 - **Moving a card from App Home** has not been exercised against the real SUP workflow. Which
   transitions it actually allows from each status is unknown until somebody clicks; the code
   reports what is reachable rather than assuming.
+- **Deleting a card from App Home** has never been run against the live site, and it is the one
+  action with no undo. Whether the service account even has the *Delete issues* project
+  permission is unknown until somebody clicks: without it Jira answers 403 and the click reports
+  that, changing nothing. Try it on a throwaway issue first.
 - **Whether `Under Triage` → `To Do` exists as a *transition***. The statuses all exist, but the
   workflow is restricted rather than global, so reaching `To Do` from `Under Triage` still needs
   checking with `npm run discover -- --issue=<key>` on an issue actually in triage. If it is
@@ -757,6 +761,46 @@ One honest cost: the Jira change is made by the shared service account, so Jira 
 BugBot rather than the person who clicked. The Slack log line records the human. A dedicated
 `bugbot@` account does not fix that either — only per-user OAuth would, which is not worth it here.
 
+**Deleting a bug from App Home.** Next to the move menu, a triager's card carries a red **Delete**
+button. It deletes the issue in Jira and removes everything BugBot left in Slack for it. This is
+the only irreversible thing BugBot does, so it is fenced accordingly.
+
+Slack shows a confirm dialog before the click is ever delivered — it names the issue, says what
+goes, and says it cannot be undone — and the dialog is attached to the button by the block
+builder, so no code path reaches the handler without it. Same triager list as the move menu,
+re-checked on the click, for the same reason: a reporter must not be able to delete their own bug
+out from under the people working it.
+
+"Everything in Slack" is the part that has to be complete, because half a delete is worse than
+none — an issue that is gone from Jira but still has a card in the feed looks like it exists and
+404s when anyone clicks it. So the delete takes down, in order:
+
+- the **feed card**, whose channel and `ts` are recorded when it is posted. That is what the
+  `feed_channel_id` / `feed_ts` columns on `issue_reports` are for, added by migration
+  `002_feed_message` — so **run `npm run migrate` before deploying this**.
+- the **confirmation message**, and with it the thread of screenshots hanging off it. Only when
+  BugBot posted it: on the shortcut path the recorded thread root is the *human's* message, which
+  Slack would refuse to delete and which is not ours to delete anyway.
+- the **`issue_reports` row**. Not tidiness — `/mybugs` and Home build `issuekey IN (...)` from
+  those rows, and Jira rejects the *whole query* over one key that no longer exists, so leaving it
+  behind would empty the reporter's list rather than remove one card from it.
+
+The `triage_events` row stays, written with `routed_to = 'deleted'`: it is the audit trail of what
+was decided, and `/bugstats` counts decisions, not surviving issues. The reporter gets a DM saying
+their bug was deleted and by whom — a DM, not a thread reply, because the thread has just been
+deleted with it. Without it the card would simply vanish from their Home and nobody would ever say
+why, which is the fastest way to lose their trust in the bot.
+
+Two failures are worth knowing about. A **403** means the service account lacks the *Delete
+issues* project permission: nothing is touched, and the DM says exactly that, because it is
+granted in Jira and the bot cannot grant it to itself — until then, *Rejected* or *Duplicate* is
+the move to make. A **404** means somebody deleted the issue in Jira first; the Slack side is
+cleaned up anyway and the reply says so, since that is the same end state rather than a failure.
+
+Cards carrying both controls are a block taller, and Slack rejects an over-long view whole rather
+than trimming it, so a triager's Home caps at `HOME_MAX_CARDS_WITH_CONTROLS` cards rather than
+`HOME_MAX_CARDS`.
+
 **`/bugstats`** prints intake by application and severity, the backlog/sprint/closed split, the
 median time in triage and the top three reporters. `/bugstats post` shares it in `#soft-world`.
 
@@ -784,7 +828,7 @@ src/
     notify.ts                 every outbound Slack call, in one place
     actions.ts                interaction ids
     files.ts                  thread attachment sync
-    home.ts                   App Home: own reports, plus Move to... for triagers
+    home.ts                   App Home: own reports, plus Move to... and Delete for triagers
     commands/bug.ts           /bug and the form submission
     commands/mybugs.ts        /mybugs and the shared query
     commands/triage.ts        /triage, its buttons, the leader buttons
@@ -797,6 +841,7 @@ src/
     route.ts                  THE routing rules, pure
     apply.ts                  the effects of a routing decision
     move.ts                   moving a bug to a column chosen by hand
+    remove.ts                 deleting a bug, in Jira and in Slack
     leaders.ts                per-application team leader lookup
   format/
     adf.ts                    Atlassian Document Format builders

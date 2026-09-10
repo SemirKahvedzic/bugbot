@@ -17,6 +17,12 @@ export const ACTION = {
   openIssue: 'open_issue',
   /** The "Move to..." menu on an App Home card. */
   moveIssue: 'move_issue',
+  /**
+   * The Delete button on an App Home card. Carries the issue key as its
+   * value, and Slack shows the confirm dialog the block builder attaches
+   * before it ever reaches the handler.
+   */
+  deleteIssue: 'delete_issue',
 } as const;
 
 /**

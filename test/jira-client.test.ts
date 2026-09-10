@@ -198,6 +198,41 @@ describe('JiraClient response handling', () => {
     ).resolves.toBeUndefined();
   });
 
+  it('sends a DELETE with its query and takes 204 for done', async () => {
+    let url: string | undefined;
+    server.use(
+      http.delete(`${BASE}/rest/api/3/issue/SUP-1`, ({ request }) => {
+        url = request.url;
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+
+    const { client } = makeClient();
+    await expect(
+      client.delete('/rest/api/3/issue/SUP-1', { deleteSubtasks: 'true' }),
+    ).resolves.toBeUndefined();
+    expect(url).toContain('deleteSubtasks=true');
+  });
+
+  it('reports a refused DELETE rather than treating it as done', async () => {
+    // The shape of a project that withholds "Delete issues" from the service
+    // account, which is the one failure this call really has.
+    server.use(
+      http.delete(`${BASE}/rest/api/3/issue/SUP-1`, () =>
+        HttpResponse.json(
+          { errorMessages: ['You do not have permission to delete issues in this project.'] },
+          { status: 403 },
+        ),
+      ),
+    );
+
+    const { client } = makeClient();
+    await expect(client.delete('/rest/api/3/issue/SUP-1')).rejects.toMatchObject({
+      status: 403,
+      isNotFound: false,
+    });
+  });
+
   it('sets Content-Type only when there is a body', async () => {
     const seen: Array<string | null> = [];
     server.use(

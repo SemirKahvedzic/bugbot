@@ -62,6 +62,26 @@ export class Notifier {
     return this.post({ channel: input.userId, fallback: input.fallback, blocks: input.blocks });
   }
 
+  /**
+   * Delete a message BugBot posted.
+   *
+   * `message_not_found` counts as success: somebody deleting the card by hand
+   * leaves exactly the state this call was asking for. `cant_delete_message`
+   * does not - that is a message we did not post, and the caller is told so it
+   * can stop trying.
+   */
+  async deleteMessage(input: { channel: string; ts: string }): Promise<boolean> {
+    try {
+      await this.slack.chat.delete({ channel: input.channel, ts: input.ts });
+      return true;
+    } catch (error) {
+      const message = describe(error);
+      if (/message_not_found|channel_not_found/.test(message)) return true;
+      this.log.warn({ channel: input.channel, err: message }, 'could not delete the message');
+      return false;
+    }
+  }
+
   async react(input: { channel: string; ts: string; name: string }): Promise<boolean> {
     try {
       await this.slack.reactions.add({ channel: input.channel, timestamp: input.ts, name: input.name });

@@ -11,6 +11,7 @@ import { Repo } from '../../src/db/repo.js';
 import { createLogger } from '../../src/logger.js';
 import { Leaders } from '../../src/triage/leaders.js';
 import type { BugbotContext } from '../../src/context.js';
+import { JiraError } from '../../src/jira/client.js';
 import type { Issue } from '../../src/jira/issues.js';
 import type { HomeView } from '@slack/types';
 import type { Priority } from '../../src/types.js';
@@ -69,6 +70,12 @@ export interface JiraCall {
   detail?: unknown;
 }
 
+/** A message the fake Slack was asked to delete. */
+export interface DeletedMessage {
+  channel: string;
+  ts: string;
+}
+
 export interface TestHarness {
   context: BugbotContext;
   db: Db;
@@ -81,6 +88,13 @@ export interface TestHarness {
   allowedTransitions: Set<string>;
   /** Every App Home view published, in order. */
   homeViews: HomeView[];
+  /** Every message deleted, in order. */
+  deletedMessages: DeletedMessage[];
+  /**
+   * Make the fake Jira refuse a delete the way a project whose permissions
+   * withhold "Delete issues" does. Set `status` to 403.
+   */
+  deleteRefusal: { status?: number };
   /** Mutate to change what Identity.forSlackUser reports. */
   identityResult: { displayName?: string; email?: string; jiraAccountId?: string };
   reset(): void;
@@ -99,6 +113,8 @@ export async function makeTestContext(
   const issuesByKey = new Map<string, Issue>();
   const allowedTransitions = new Set<string>();
   const homeViews: HomeView[] = [];
+  const deletedMessages: DeletedMessage[] = [];
+  const deleteRefusal: { status?: number } = {};
 
   const flatten = (blocks: unknown): string => JSON.stringify(blocks ?? '');
 
@@ -121,6 +137,10 @@ export async function makeTestContext(
       return { ok: true, channel: input.userId, ts: '111.222' };
     },
     async react() {
+      return true;
+    },
+    async deleteMessage(input: { channel: string; ts: string }) {
+      deletedMessages.push({ channel: input.channel, ts: input.ts });
       return true;
     },
     async publishHome(_userId: string, view: HomeView) {
@@ -179,6 +199,22 @@ export async function makeTestContext(
       const issue = issuesByKey.get(issueKey);
       if (issue) issue.fields.status = { id: '0', name: statusName };
       return true;
+    },
+    async deleteIssue(issueKey: string) {
+      jiraCalls.push({ op: 'deleteIssue', issueKey });
+      if (deleteRefusal.status) {
+        throw new JiraError(deleteRefusal.status, 'DELETE', `/rest/api/3/issue/${issueKey}`, [
+          "You do not have permission to delete issues in this project.",
+        ]);
+      }
+      if (!issuesByKey.has(issueKey)) {
+        // What Jira answers for an issue that is not there - which is how a
+        // second click, or a delete somebody did in Jira first, arrives.
+        throw new JiraError(404, 'DELETE', `/rest/api/3/issue/${issueKey}`, [
+          'Issue does not exist or you do not have permission to see it.',
+        ]);
+      }
+      issuesByKey.delete(issueKey);
     },
     async transitionsFor(issueKey: string) {
       const targets = allowedTransitions.size === 0 ? FAKE_STATUSES : [...allowedTransitions];
@@ -281,6 +317,8 @@ export async function makeTestContext(
     repo,
     posts,
     homeViews,
+    deletedMessages,
+    deleteRefusal,
     jiraCalls,
     issuesByKey,
     allowedTransitions,
@@ -289,6 +327,7 @@ export async function makeTestContext(
       posts.length = 0;
       jiraCalls.length = 0;
       homeViews.length = 0;
+      deletedMessages.length = 0;
     },
   };
 }

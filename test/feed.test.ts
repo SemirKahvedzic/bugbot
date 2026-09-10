@@ -358,6 +358,15 @@ describe('postBugFeed', () => {
     expect(card?.text).toContain('SUP-1');
   });
 
+  it('remembers where the card is, so a delete can take it down', async () => {
+    await harness.repo.recordIssueReport({ issueKey: 'SUP-1', intakeSource: 'slack_modal' });
+
+    await postBugFeed(harness.context, { issueKey: 'SUP-1', summary: 'a', source: 'slack_modal' });
+
+    const stored = await harness.repo.getIssueReport('SUP-1');
+    expect(stored).toMatchObject({ feed_channel_id: FEED, feed_ts: '111.222' });
+  });
+
   it('posts exactly once per issue, however many times it is called', async () => {
     expect(await postBugFeed(harness.context, { issueKey: 'SUP-1', summary: 'a', source: 'slack_modal' })).toBe(true);
     expect(await postBugFeed(harness.context, { issueKey: 'SUP-1', summary: 'a', source: 'jira_native' })).toBe(false);

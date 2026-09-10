@@ -114,6 +114,24 @@ export class Issues {
     return true;
   }
 
+  /**
+   * Delete the issue outright.
+   *
+   * Irreversible, and Jira offers no undo: the caller must have asked a human
+   * first. `deleteSubtasks` is sent because Jira refuses the call with a 400
+   * when an issue has children rather than orphaning them, and a Finding with
+   * a subtask is unusual but not impossible.
+   *
+   * A 404 is left to the caller. It means somebody deleted it in Jira
+   * already, which is the same end state rather than a failure - but only the
+   * caller can decide what to say about it.
+   */
+  async deleteIssue(issueKey: string): Promise<void> {
+    await this.client.delete(`/rest/api/3/issue/${encodeURIComponent(issueKey)}`, {
+      deleteSubtasks: 'true',
+    });
+  }
+
   transitionsFor(issueKey: string): Promise<JiraTransition[]> {
     return this.meta.transitionsFor(issueKey);
   }

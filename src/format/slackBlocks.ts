@@ -294,6 +294,12 @@ export interface BugCardOptions {
    */
   moveTargets?: string[];
   /**
+   * Put a Delete button on the card. Like the move menu, only for a triager -
+   * and unlike it, irreversible, so the button carries a confirm dialog and
+   * Slack will not deliver the click until somebody has read it.
+   */
+  allowDelete?: boolean;
+  /**
    * The heading the card sits under. When that heading already names the
    * issue's status, the card leaves it out - the summary is worth the line.
    *
@@ -341,7 +347,39 @@ function moveMenu(issue: IssueSummaryLine, targets: string[]) {
   };
 }
 
+/**
+ * The Delete button.
+ *
+ * The confirm dialog is the whole safety story for this feature: the click
+ * cannot be undone, in Jira or here, and Slack renders the dialog itself so
+ * there is no way to reach the handler by accident. It names the issue and
+ * says what goes, because "Are you sure?" on its own tells nobody anything.
+ */
+function deleteButton(issue: IssueSummaryLine) {
+  return {
+    type: 'button' as const,
+    action_id: ACTION.deleteIssue,
+    style: 'danger' as const,
+    text: { type: 'plain_text' as const, text: 'Delete' },
+    value: issue.key,
+    confirm: {
+      title: { type: 'plain_text' as const, text: 'Delete this bug?' },
+      text: {
+        type: 'mrkdwn' as const,
+        text:
+          `*${issue.key}* — ${escape(truncate(issue.summary, 120))}\n\n` +
+          'This deletes the issue in Jira and removes its cards and confirmation thread ' +
+          'from Slack. It cannot be undone.',
+      },
+      confirm: { type: 'plain_text' as const, text: 'Delete it' },
+      deny: { type: 'plain_text' as const, text: 'Keep it' },
+      style: 'danger' as const,
+    },
+  };
+}
+
 export function bugCardBlocks(
+
   baseUrl: string,
   issue: IssueSummaryLine,
   options: BugCardOptions = {},
@@ -367,6 +405,14 @@ export function bugCardBlocks(
     relativeTime(issue.created) ? `filed ${relativeTime(issue.created)}` : undefined,
   ].filter(Boolean);
 
+  // What this reader may do with the card. A section holds one accessory, so
+  // a second control needs an actions block of its own - a block per card
+  // more, which is what HOME_MAX_CARDS_WITH_CONTROLS pays for.
+  const controls = [
+    options.moveTargets?.length ? moveMenu(issue, options.moveTargets) : undefined,
+    options.allowDelete ? deleteButton(issue) : undefined,
+  ].filter(Boolean);
+
   return [
     {
       type: 'section',
@@ -379,13 +425,17 @@ export function bugCardBlocks(
           `${statusEmoji(issue.status)}  *<${url}|${issue.key}>*  ` +
           escape(truncate(issue.summary, 200)),
       },
-      // One accessory slot, and the move menu earns it: the issue key in the
-      // text above is already a link to Jira, so an Open button next to it was
-      // duplicating what the card already had.
-      accessory: options.moveTargets?.length
-        ? (moveMenu(issue, options.moveTargets) ?? openButton(url))
-        : openButton(url),
-    },
+      // One accessory slot, and a single control earns it: the move menu over
+      // an Open button, because the issue key in the text above is already a
+      // link to Jira. With nothing to do on the card, Open is what is left.
+      ...(controls.length === 1 ? { accessory: controls[0] } : {}),
+      ...(controls.length === 0 ? { accessory: openButton(url) } : {}),
+    } as AnyBlock,
+    // Two controls do not fit one slot, so they get a row of their own -
+    // Move first, Delete last and styled as the danger it is.
+    ...(controls.length > 1
+      ? [{ type: 'actions', block_id: `card_${issue.key}`, elements: controls } as AnyBlock]
+      : []),
     context(meta.join('  •  ')),
     { type: 'divider' },
   ];
@@ -475,6 +525,12 @@ export function myBugsBlocks(input: {
  * total under the cap however high the caller's limit is set.
  */
 export const HOME_MAX_CARDS = 25;
+/**
+ * A triager's cards carry a Move menu *and* a Delete button, which needs a
+ * fourth block each. Eleven blocks go on the header, the counts and the bucket
+ * headings, so 22 such cards is the true ceiling; this leaves room to spare.
+ */
+export const HOME_MAX_CARDS_WITH_CONTROLS = 18;
 export const HOME_BLOCK_LIMIT = 100;
 
 /**
@@ -541,10 +597,23 @@ export function homeView(input: {
    * card.
    */
   moveTargets?: string[];
+  /**
+   * Put a Delete button on every card. Given only for a triager, for the same
+   * reason as moveTargets - and this one cannot be undone, so the button
+   * itself asks for confirmation before Slack delivers the click.
+   */
+  allowDelete?: boolean;
 }): HomeView {
-  const cards: BugCardOptions = input.moveTargets?.length
-    ? { moveTargets: input.moveTargets }
-    : {};
+  const cards: BugCardOptions = {
+    ...(input.moveTargets?.length ? { moveTargets: input.moveTargets } : {}),
+    ...(input.allowDelete ? { allowDelete: true } : {}),
+  };
+
+  // Two controls make every card a block taller, so fewer cards fit the view.
+  const maxCards =
+    cards.moveTargets?.length && cards.allowDelete
+      ? HOME_MAX_CARDS_WITH_CONTROLS
+      : HOME_MAX_CARDS;
 
   const blocks: AnyBlock[] = [
     { type: 'header', text: { type: 'plain_text', text: 'Your bug reports' } },
@@ -567,7 +636,7 @@ export function homeView(input: {
     ...cardSection({
       baseUrl: input.baseUrl,
       issues: input.issues,
-      limit: Math.min(input.limit, HOME_MAX_CARDS),
+      limit: Math.min(input.limit, maxCards),
       jqlUrl: input.jqlUrl,
       empty:
         'You have not reported any bugs yet. Hit *Report a bug*, or run `/bug` in a channel, ' +

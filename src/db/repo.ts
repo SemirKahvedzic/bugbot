@@ -17,6 +17,9 @@ export interface IssueReportRow {
   slack_user_id: string | null;
   slack_channel_id: string | null;
   slack_thread_ts: string | null;
+  /** The feed card BugBot posted, when there is one. */
+  feed_channel_id: string | null;
+  feed_ts: string | null;
   intake_source: string;
   created_at: string;
 }
@@ -34,7 +37,7 @@ export interface TriageEventInput {
   toStatus?: string;
   priority?: string;
   /** 'manual' is a triager choosing a column by hand, not a routing rule. */
-  routedTo?: 'backlog' | 'sprint' | 'closed' | 'none' | 'manual';
+  routedTo?: 'backlog' | 'sprint' | 'closed' | 'none' | 'manual' | 'deleted';
   actorAccountId?: string;
 }
 
@@ -86,6 +89,37 @@ export class Repo {
       'UPDATE issue_reports SET slack_channel_id = $1, slack_thread_ts = $2 WHERE issue_key = $3',
       [channelId, threadTs, issueKey],
     );
+  }
+
+  /**
+   * Remember the feed card, so deleting the bug can take the card down too.
+   *
+   * A no-op when the issue has no row yet, which cannot happen: both intake
+   * paths record the report before they post the card.
+   */
+  async setFeedMessage(issueKey: string, channelId: string, ts: string): Promise<void> {
+    await this.db.query(
+      'UPDATE issue_reports SET feed_channel_id = $1, feed_ts = $2 WHERE issue_key = $3',
+      [channelId, ts, issueKey],
+    );
+  }
+
+  /**
+   * Forget an issue entirely. Returns false when there was nothing to forget.
+   *
+   * Required rather than tidy: `/mybugs` and App Home build JQL with
+   * `issuekey IN (...)` from these rows, and Jira rejects the *whole query*
+   * when one key no longer exists. Leaving the row behind after a delete would
+   * empty the reporter's list rather than remove one card from it.
+   *
+   * The `triage_events` rows are deliberately kept - they are the audit trail,
+   * and /bugstats counts decisions, not surviving issues.
+   */
+  async deleteIssueReport(issueKey: string): Promise<boolean> {
+    const result = await this.db.query('DELETE FROM issue_reports WHERE issue_key = $1', [
+      issueKey,
+    ]);
+    return result.rowCount === 1;
   }
 
   /** Which issue, if any, does this Slack thread belong to? */

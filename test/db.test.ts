@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import { runMigrations, toCount, type Db } from '../src/db/index.js';
 import { makeTestDb } from './helpers/db.js';
-import type { Migration } from '../src/db/migrations/index.js';
+import { migrations, type Migration } from '../src/db/migrations/index.js';
 
 let db: Db;
 
@@ -35,7 +35,8 @@ describe('migrations', () => {
 
   it('records each applied migration exactly once', async () => {
     const result = await db.query<{ id: string }>('SELECT id FROM schema_migrations');
-    expect(result.rows.map((row) => row.id)).toEqual(['001_init']);
+    expect(result.rows.map((row) => row.id)).toEqual(migrations.map((one) => one.id));
+    expect(new Set(result.rows.map((row) => row.id)).size).toBe(migrations.length);
   });
 
   it('applies a new migration without re-running the old one', async () => {

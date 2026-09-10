@@ -165,6 +165,11 @@ export class JiraClient {
     return this.request<T>('PUT', path, { body, query });
   }
 
+  /** Jira answers a successful DELETE with 204 and no body, hence `Promise<void>`. */
+  delete(path: string, query?: RequestOptions['query']): Promise<void> {
+    return this.request<void>('DELETE', path, { query });
+  }
+
   /**
    * Multipart upload, for attachments.
    *

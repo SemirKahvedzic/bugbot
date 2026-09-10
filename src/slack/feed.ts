@@ -73,6 +73,12 @@ export async function postBugFeed(
 
   if (result.ok) {
     log.info({ issueKey: input.issueKey, channel, source: input.source }, 'posted to the bug feed');
+
+    // Remembered so that deleting the bug can take its card down as well.
+    // Without this the feed keeps a card whose Jira link is dead.
+    if (result.channel && result.ts) {
+      await repo.setFeedMessage(input.issueKey, result.channel, result.ts);
+    }
   }
 
   return result.ok;
