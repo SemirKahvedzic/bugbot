@@ -405,9 +405,9 @@ export function bugCardBlocks(
     relativeTime(issue.created) ? `filed ${relativeTime(issue.created)}` : undefined,
   ].filter(Boolean);
 
-  // What this reader may do with the card. A section holds one accessory, so
-  // a second control needs an actions block of its own - a block per card
-  // more, which is what HOME_MAX_CARDS_WITH_CONTROLS pays for.
+  // What this reader may do with the card. Move first, Delete last and styled
+  // as the danger it is, so the destructive one is not where the eye lands or
+  // the thumb reaches first.
   const controls = [
     options.moveTargets?.length ? moveMenu(issue, options.moveTargets) : undefined,
     options.allowDelete ? deleteButton(issue) : undefined,
@@ -425,18 +425,19 @@ export function bugCardBlocks(
           `${statusEmoji(issue.status)}  *<${url}|${issue.key}>*  ` +
           escape(truncate(issue.summary, 200)),
       },
-      // One accessory slot, and a single control earns it: the move menu over
-      // an Open button, because the issue key in the text above is already a
-      // link to Jira. With nothing to do on the card, Open is what is left.
-      ...(controls.length === 1 ? { accessory: controls[0] } : {}),
+      // The accessory slot is the read-only card's: with nothing to do on it,
+      // an Open button is what the card is for. Anything actionable goes in a
+      // row at the foot instead - even a lone control, which the slot could
+      // have held. A menu hanging off the title squeezed the summary into a
+      // narrow column and sat in a different place on every card; a row below
+      // the metadata reads as a card, and reads the same on all of them.
       ...(controls.length === 0 ? { accessory: openButton(url) } : {}),
     } as AnyBlock,
-    // Two controls do not fit one slot, so they get a row of their own -
-    // Move first, Delete last and styled as the danger it is.
-    ...(controls.length > 1
+    context(meta.join('  •  ')),
+    // A block per card, which is what HOME_MAX_CARDS_WITH_CONTROLS pays for.
+    ...(controls.length > 0
       ? [{ type: 'actions', block_id: `card_${issue.key}`, elements: controls } as AnyBlock]
       : []),
-    context(meta.join('  •  ')),
     { type: 'divider' },
   ];
 }
@@ -526,7 +527,7 @@ export function myBugsBlocks(input: {
  */
 export const HOME_MAX_CARDS = 25;
 /**
- * A triager's cards carry a Move menu *and* a Delete button, which needs a
+ * A card with controls carries them in a row of their own, which needs a
  * fourth block each. Eleven blocks go on the header, the counts and the bucket
  * headings, so 22 such cards is the true ceiling; this leaves room to spare.
  */
@@ -609,9 +610,9 @@ export function homeView(input: {
     ...(input.allowDelete ? { allowDelete: true } : {}),
   };
 
-  // Two controls make every card a block taller, so fewer cards fit the view.
+  // Controls make every card a block taller, so fewer cards fit the view.
   const maxCards =
-    cards.moveTargets?.length && cards.allowDelete
+    cards.moveTargets?.length || cards.allowDelete
       ? HOME_MAX_CARDS_WITH_CONTROLS
       : HOME_MAX_CARDS;
 

@@ -222,7 +222,7 @@ describe('bugCardBlocks: the Delete button', () => {
     expect(text).toContain('"style":"danger"');
   });
 
-  it('shares a row with the move menu, and only then costs a block', () => {
+  it('shares a row with the move menu at the foot of the card', () => {
     const readOnly = bugCardBlocks('https://jira.example', card);
     const both = bugCardBlocks('https://jira.example', card, {
       moveTargets: ['In Progress', 'Done'],
@@ -232,8 +232,11 @@ describe('bugCardBlocks: the Delete button', () => {
     expect(readOnly).toHaveLength(3);
     expect(both).toHaveLength(4);
 
-    const actions = both[1] as { type: string; elements: Array<{ action_id: string }> };
-    expect(actions.type).toBe('actions');
+    // Title, then the metadata, then the controls: they sit under everything
+    // the card says about the bug rather than between the two halves of it.
+    expect(both.map((block) => block.type)).toEqual(['section', 'context', 'actions', 'divider']);
+
+    const actions = both[2] as { elements: Array<{ action_id: string }> };
     // Move first, delete last, so the destructive one is not where the eye
     // lands or the thumb reaches first.
     expect(actions.elements.map((element) => element.action_id)).toEqual([
@@ -242,9 +245,16 @@ describe('bugCardBlocks: the Delete button', () => {
     ]);
   });
 
-  it('takes the accessory slot when it is the only control', () => {
+  it('sits in that same row when it is the only control', () => {
+    // Not in the accessory slot it would fit in: the controls belong in one
+    // place on every card, and one of them is not worth crowding the summary.
     const blocks = bugCardBlocks('https://jira.example', card, { allowDelete: true });
-    expect(blocks).toHaveLength(3);
+    expect(blocks.map((block) => block.type)).toEqual([
+      'section',
+      'context',
+      'actions',
+      'divider',
+    ]);
     expect(json(blocks)).not.toContain('open_issue');
   });
 });

@@ -195,8 +195,8 @@ describe('bugCardBlocks', () => {
     expect(text).toContain('SUP-1::Done');
     // Moving to where it already is would be a no-op, so it is not offered.
     expect(text).not.toContain('SUP-1::Under Triage');
-    // The menu takes the accessory slot the Open button had; the issue key in
-    // the card text is already a link to Jira.
+    // It replaces the Open button rather than joining it; the issue key in the
+    // card text is already a link to Jira.
     expect(text).not.toContain('open_issue');
   });
 
