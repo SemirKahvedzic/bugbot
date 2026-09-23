@@ -62,6 +62,8 @@ export interface PostedMessage {
   target: string;
   threadTs?: string;
   text: string;
+  /** The attachment bar colour, when the caller asked for one. */
+  color?: string;
 }
 
 export interface JiraCall {
@@ -119,12 +121,19 @@ export async function makeTestContext(
   const flatten = (blocks: unknown): string => JSON.stringify(blocks ?? '');
 
   const notifier = {
-    async post(input: { channel: string; fallback: string; blocks?: unknown; threadTs?: string }) {
+    async post(input: {
+      channel: string;
+      fallback: string;
+      blocks?: unknown;
+      threadTs?: string;
+      color?: string;
+    }) {
       posts.push({
         kind: 'channel',
         target: input.channel,
         ...(input.threadTs ? { threadTs: input.threadTs } : {}),
         text: `${input.fallback} ${flatten(input.blocks)}`,
+        ...(input.color ? { color: input.color } : {}),
       });
       return { ok: true, channel: input.channel, ts: '111.222' };
     },

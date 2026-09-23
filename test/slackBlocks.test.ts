@@ -3,6 +3,7 @@ import {
   bucketIssues,
   bugCardBlocks,
   HOME_MAX_CARDS,
+  priorityEmoji,
   relativeTime,
   statusEmoji,
   escape,
@@ -17,6 +18,7 @@ import {
 } from '../src/format/slackBlocks.js';
 import { ACTION } from '../src/slack/actions.js';
 import type { BugReport } from '../src/types.js';
+import type { AnyBlock } from '@slack/types';
 
 const BASE = 'https://roarington.atlassian.net';
 
@@ -264,47 +266,57 @@ describe('bugCardBlocks', () => {
     created: new Date(Date.now() - 3 * 86_400_000).toISOString(),
   };
 
-  it('is three blocks: the card, its metadata, and a divider', () => {
+  const bodyText = (blocks: AnyBlock[]): string =>
+    (blocks[0] as { text?: { text?: string } }).text?.text ?? '';
+
+  it('is four blocks: the body, the buttons, the footer, and a divider', () => {
     const blocks = bugCardBlocks(BASE, issue);
-    expect(blocks).toHaveLength(3);
-    expect(blocks[0]!.type).toBe('section');
-    expect(blocks[1]!.type).toBe('context');
-    expect(blocks[2]!.type).toBe('divider');
+    expect(blocks.map((block) => block.type)).toEqual(['section', 'actions', 'context', 'divider']);
   });
 
-  it('shows the key, status, summary and a status dot', () => {
-    const text = json(bugCardBlocks(BASE, issue));
-    expect(text).toContain('SUP-12');
-    expect(text).toContain('Under Triage');
-    expect(text).toContain('Brake lights lag behind the pedal');
-    expect(text).toContain(statusEmoji('Under Triage'));
+  it('titles the card with a red dot and the summary, linked to Jira', () => {
+    const [title] = bodyText(bugCardBlocks(BASE, issue)).split('\n');
+    expect(title).toBe(
+      `:red_circle: *<${BASE}/browse/SUP-12|Brake lights lag behind the pedal>*`,
+    );
   });
 
-  it('unpacks the QA fields out of the labels', () => {
-    const text = json(bugCardBlocks(BASE, issue));
-    expect(text).toContain('world.roarington.com');
-    expect(text).toContain('production');
-    expect(text).toContain('phone');
-    expect(text).toContain('severity major');
-    expect(text).toContain('happens always');
+  it('lists the status with its own dot, and the priority, one per line', () => {
+    const lines = bodyText(bugCardBlocks(BASE, issue)).split('\n');
+    expect(lines).toContain(`*Status:* ${statusEmoji('Under Triage')} Under Triage`);
+    expect(lines).toContain(`*Priority:* ${priorityEmoji('High')} High`);
   });
 
-  it('says how old it is and whether anyone is on it', () => {
-    const text = json(bugCardBlocks(BASE, issue));
-    expect(text).toContain('filed 3 days ago');
-    expect(text).toContain('unassigned');
+  it('unpacks the QA fields out of the labels, one labelled line each', () => {
+    const lines = bodyText(bugCardBlocks(BASE, issue)).split('\n');
+    expect(lines).toContain('*Application:* world.roarington.com');
+    expect(lines).toContain('*Environment:* production');
+    expect(lines).toContain('*Device:* phone');
+    expect(lines).toContain('*Severity:* major');
+    expect(lines).toContain('*Frequency:* always');
+  });
 
-    const assigned = json(bugCardBlocks(BASE, { ...issue, assigneeName: 'Jakub Krawczyk' }));
-    expect(assigned).toContain('assigned to Jakub Krawczyk');
+  it('says whether anyone is on it', () => {
+    expect(bodyText(bugCardBlocks(BASE, issue))).toContain('*Assignee:* unassigned');
+
+    const assigned = bodyText(bugCardBlocks(BASE, { ...issue, assigneeName: 'Jakub Krawczyk' }));
+    expect(assigned).toContain('*Assignee:* Jakub Krawczyk');
     expect(assigned).not.toContain('unassigned');
   });
 
-  it('carries an Open button that links to Jira', () => {
+  it('puts the key and the age in the footer', () => {
+    const footer = json(bugCardBlocks(BASE, issue)[2]);
+    expect(footer).toContain('SUP-12');
+    expect(footer).toContain('filed 3 days ago');
+  });
+
+  it('carries an Open in Jira button in the row at the foot', () => {
     const blocks = bugCardBlocks(BASE, issue);
-    const accessory = (blocks[0] as { accessory?: { url?: string; action_id?: string } }).accessory;
-    expect(accessory?.url).toBe(`${BASE}/browse/SUP-12`);
+    const actions = blocks[1] as { elements: Array<{ url?: string; action_id?: string }> };
+    expect(actions.elements).toHaveLength(1);
+    expect(actions.elements[0]?.url).toBe(`${BASE}/browse/SUP-12`);
     // A URL button still fires an interaction, so it needs an id to ack.
-    expect(accessory?.action_id).toBe(ACTION.openIssue);
+    expect(actions.elements[0]?.action_id).toBe(ACTION.openIssue);
   });
 
   it('degrades to just the essentials when a bug has no labels', () => {

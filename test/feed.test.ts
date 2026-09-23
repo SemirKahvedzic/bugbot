@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { bugFeedBlocks } from '../src/format/slackBlocks.js';
+import { BUG_COLOR, bugFeedBlocks } from '../src/format/slackBlocks.js';
 import { handleWebhook, webhookSchema } from '../src/jira/webhook.js';
 import { fileBug } from '../src/slack/commands/bug.js';
 import { postBugFeed } from '../src/slack/feed.js';
@@ -218,9 +218,9 @@ describe('bugFeedBlocks: the card layout', () => {
     report,
   });
 
-  it('opens with a divider and a header, so consecutive cards read apart', () => {
-    expect(blocks[0]!.type).toBe('divider');
-    expect(blocks[1]!.type).toBe('header');
+  it('opens with the header, not a divider: the coloured bar keeps cards apart now', () => {
+    expect(blocks[0]!.type).toBe('header');
+    expect(blocks.some((block) => block.type === 'divider')).toBe(false);
   });
 
   it('puts the environment in a two-column field grid', () => {
@@ -356,6 +356,8 @@ describe('postBugFeed', () => {
     expect(sent).toBe(true);
     const card = harness.posts.find((post) => post.target === FEED);
     expect(card?.text).toContain('SUP-1');
+    // Red bar down the side, so a bug reads as a bug from across the channel.
+    expect(card?.color).toBe(BUG_COLOR);
   });
 
   it('remembers where the card is, so a delete can take it down', async () => {

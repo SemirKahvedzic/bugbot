@@ -26,6 +26,14 @@ export class Notifier {
   /**
    * Post to a channel, optionally threaded.
    * `fallback` is the notification text shown in the sidebar and on mobile.
+   *
+   * With `color`, the blocks go inside a single attachment instead of on the
+   * message itself: an attachment is the only thing Slack still paints a
+   * coloured bar down the side of, and that bar is what makes a card read as
+   * "a bug" from across the channel. The message then carries no top-level
+   * text - with attachments and no blocks Slack would render it as a line
+   * above the card - so the fallback moves into the attachment, where it does
+   * the same job.
    */
   async post(input: {
     channel: string;
@@ -33,12 +41,18 @@ export class Notifier {
     blocks?: AnyBlock[];
     threadTs?: string;
     unfurl?: boolean;
+    /** A hex colour, `#rrggbb`, for the bar down the side. Needs `blocks`. */
+    color?: string;
   }): Promise<PostResult> {
     try {
+      const body =
+        input.color && input.blocks
+          ? { attachments: [{ color: input.color, fallback: input.fallback, blocks: input.blocks }] }
+          : { text: input.fallback, ...(input.blocks ? { blocks: input.blocks } : {}) };
+
       const response = await this.slack.chat.postMessage({
         channel: input.channel,
-        text: input.fallback,
-        ...(input.blocks ? { blocks: input.blocks } : {}),
+        ...body,
         ...(input.threadTs ? { thread_ts: input.threadTs } : {}),
         unfurl_links: input.unfurl ?? false,
         unfurl_media: input.unfurl ?? false,

@@ -10,7 +10,7 @@
  * Posting is claimed on `feed:<issueKey>`, so a redelivered webhook, or a bug
  * that somehow reaches both paths, still produces exactly one card.
  */
-import { bugFeedBlocks, issueUrl } from '../format/slackBlocks.js';
+import { BUG_COLOR, bugFeedBlocks, issueUrl } from '../format/slackBlocks.js';
 import type { BugbotContext } from '../context.js';
 import type { BugReport, IntakeSource } from '../types.js';
 
@@ -57,6 +57,8 @@ export async function postBugFeed(
   const result = await notifier.post({
     channel,
     fallback: `${input.issueKey}: ${input.summary}`,
+    // The red bar down the side: this is what makes the card a bug card.
+    color: BUG_COLOR,
     blocks: bugFeedBlocks({
       issueKey: input.issueKey,
       issueUrl: issueUrl(config.JIRA_BASE_URL, input.issueKey),

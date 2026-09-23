@@ -195,12 +195,12 @@ describe('bugCardBlocks', () => {
     expect(text).toContain('SUP-1::Done');
     // Moving to where it already is would be a no-op, so it is not offered.
     expect(text).not.toContain('SUP-1::Under Triage');
-    // It replaces the Open button rather than joining it; the issue key in the
-    // card text is already a link to Jira.
-    expect(text).not.toContain('open_issue');
+    // It joins the Open in Jira button in the row at the foot; every card has
+    // that button, so the row is in the same place whoever is looking.
+    expect(text).toContain('open_issue');
   });
 
-  it('keeps the Open button when the only target is where the issue already is', () => {
+  it('leaves just the Open button when the only target is where the issue already is', () => {
     const text = json(bugCardBlocks('https://jira.example', card, { moveTargets: ['Under Triage'] }));
     // An empty static_select is rejected by Slack, so the card falls back
     // rather than taking the whole view down.
@@ -213,10 +213,12 @@ describe('bugCardBlocks: what the card says', () => {
   const cardText = (blocks: AnyBlock[]): string =>
     (blocks[0] as { text?: { text?: string } }).text?.text ?? '';
 
-  it('spends the title line on the summary, not the status', () => {
-    const text = cardText(bugCardBlocks('https://jira.example', card));
-    expect(text).toContain('SUP-1');
-    expect(text).toContain('Brake lights lag');
+  it('spends the title line on the summary, and puts the key in the footer', () => {
+    const blocks = bugCardBlocks('https://jira.example', card);
+    const [title] = cardText(blocks).split('\n');
+    // The key is in the URL, but not in what the reader sees of the title.
+    expect(title).toBe(':red_circle: *<https://jira.example/browse/SUP-1|Brake lights lag>*');
+    expect(json([blocks[2]!])).toContain('SUP-1');
   });
 
   it('leaves the status off when the heading above already names it', () => {

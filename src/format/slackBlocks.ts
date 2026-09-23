@@ -120,6 +120,14 @@ function field(label: string, value: string): { type: 'mrkdwn'; text: string } {
  * explicitly: making that gap visible is the point of having a single funnel
  * at all.
  */
+/**
+ * The bar down the side of a feed card. Slack's own red, the same one its
+ * danger buttons use, so a bug reads as a bug from across the channel - and
+ * it matches the red dot on the App Home cards. Posted as an attachment
+ * colour; see Notifier.post.
+ */
+export const BUG_COLOR = '#E01E5A';
+
 export function bugFeedBlocks(input: BugFeedInput): AnyBlock[] {
   const parsed = parseLabels(input.labels);
   const report = input.report;
@@ -137,8 +145,9 @@ export function bugFeedBlocks(input: BugFeedInput): AnyBlock[] {
       ? escape(input.reporterName)
       : 'unknown reporter';
 
+  // No divider on top any more: the card used to open with one so consecutive
+  // cards read apart, and now the coloured bar does that.
   const blocks: AnyBlock[] = [
-    { type: 'divider' },
     {
       type: 'header',
       // plain_text, so this must NOT be html-escaped - Slack would render the
@@ -280,7 +289,9 @@ export function relativeTime(iso: string | undefined, now = Date.now()): string 
 }
 
 /**
- * One bug as a card: a titled section with a link out, then a metadata line.
+ * One bug as a card, laid out the way a monitoring alert is: a red dot and the
+ * summary as the title, a column of `Label: value` lines under it, a row of
+ * buttons, and a small grey footer.
  *
  * Used on App Home, where there is room to browse. `/mybugs` keeps the compact
  * list - it is a quick peek in an ephemeral message, and twenty cards there
@@ -289,7 +300,7 @@ export function relativeTime(iso: string | undefined, now = Date.now()): string 
 export interface BugCardOptions {
   /**
    * Status names to offer in a "Move to..." menu on the card. Omitted, or
-   * empty, leaves a read-only card with an Open button instead - which is what
+   * empty, leaves a read-only card with just the Open button - which is what
    * anyone who is not a triager sees.
    */
   moveTargets?: string[];
@@ -378,8 +389,18 @@ function deleteButton(issue: IssueSummaryLine) {
   };
 }
 
-export function bugCardBlocks(
+/**
+ * Every card is a bug, and the dot says so: red, on every one. A message
+ * attachment could paint a red bar down the side instead, but App Home is
+ * published as blocks and has no such bar, so the dot is where the colour
+ * goes. The status keeps its own dot on its own line below.
+ */
+const BUG_DOT = ':red_circle:';
 
+/** One `*Label:* value` line of the card body. The value is mrkdwn-escaped. */
+const line = (label: string, value: string): string => `*${label}:* ${escape(value)}`;
+
+export function bugCardBlocks(
   baseUrl: string,
   issue: IssueSummaryLine,
   options: BugCardOptions = {},
@@ -387,57 +408,49 @@ export function bugCardBlocks(
   const parsed = parseLabels(issue.labels);
   const url = issueUrl(baseUrl, issue.key);
 
-  const detail = [parsed.app, parsed.env, parsed.dev].filter(Boolean).join(' · ');
-  const quality = [parsed.sev && `severity ${parsed.sev}`, parsed.freq && `happens ${parsed.freq}`]
-    .filter(Boolean)
-    .join(', ');
-
   const statusNamedAbove =
     options.bucketLabel !== undefined &&
     options.bucketLabel.toLowerCase() === issue.status.toLowerCase();
 
-  const meta = [
-    statusNamedAbove ? undefined : escape(issue.status),
-    issue.priority ? `*${escape(issue.priority)}*` : undefined,
-    detail ? escape(detail) : undefined,
-    quality ? escape(quality) : undefined,
-    issue.assigneeName ? `assigned to ${escape(issue.assigneeName)}` : 'unassigned',
-    relativeTime(issue.created) ? `filed ${relativeTime(issue.created)}` : undefined,
+  // One fact per line, in the order somebody triaging reads them: where it
+  // stands, how urgent, where it happened, how bad, who has it. A fact the
+  // labels do not carry is left out rather than shown blank.
+  const body = [
+    statusNamedAbove ? undefined : `*Status:* ${statusEmoji(issue.status)} ${escape(issue.status)}`,
+    issue.priority
+      ? `*Priority:* ${priorityEmoji(issue.priority)} ${escape(issue.priority)}`
+      : undefined,
+    parsed.app ? line('Application', parsed.app) : undefined,
+    parsed.env ? line('Environment', parsed.env) : undefined,
+    parsed.dev ? line('Device', parsed.dev) : undefined,
+    parsed.sev ? line('Severity', parsed.sev) : undefined,
+    parsed.freq ? line('Frequency', parsed.freq) : undefined,
+    line('Assignee', issue.assigneeName ?? 'unassigned'),
   ].filter(Boolean);
 
-  // What this reader may do with the card. Move first, Delete last and styled
-  // as the danger it is, so the destructive one is not where the eye lands or
-  // the thumb reaches first.
+  // What this reader may do with the card: Open in Jira on every card, then
+  // for a triager Move and, last, Delete - styled as the danger it is, so the
+  // destructive one is not where the eye lands or the thumb reaches first.
   const controls = [
+    openButton(url),
     options.moveTargets?.length ? moveMenu(issue, options.moveTargets) : undefined,
     options.allowDelete ? deleteButton(issue) : undefined,
   ].filter(Boolean);
 
+  const filed = relativeTime(issue.created);
+
   return [
-    {
-      type: 'section',
-      text: {
-        type: 'mrkdwn',
-        text:
-          // The key and the summary on one line. The status used to sit here
-          // and the summary below it, which spent the most valuable line in the
-          // card repeating the heading the card was already under.
-          `${statusEmoji(issue.status)}  *<${url}|${issue.key}>*  ` +
-          escape(truncate(issue.summary, 200)),
-      },
-      // The accessory slot is the read-only card's: with nothing to do on it,
-      // an Open button is what the card is for. Anything actionable goes in a
-      // row at the foot instead - even a lone control, which the slot could
-      // have held. A menu hanging off the title squeezed the summary into a
-      // narrow column and sat in a different place on every card; a row below
-      // the metadata reads as a card, and reads the same on all of them.
-      ...(controls.length === 0 ? { accessory: openButton(url) } : {}),
-    } as AnyBlock,
-    context(meta.join('  •  ')),
-    // A block per card, which is what HOME_MAX_CARDS_WITH_CONTROLS pays for.
-    ...(controls.length > 0
-      ? [{ type: 'actions', block_id: `card_${issue.key}`, elements: controls } as AnyBlock]
-      : []),
+    section(
+      // The summary is the title, and the title is the link. The key moves to
+      // the footer: it is what you paste into Jira, not what you read.
+      `${BUG_DOT} *<${url}|${escape(truncate(issue.summary, 200))}>*\n` + body.join('\n'),
+    ),
+    // The buttons sit in one row at the foot on every card, read-only or not.
+    // A lone Open button could hang off the title as an accessory, but then
+    // the controls would be in a different place on a triager's cards; one
+    // shape for all of them is what makes a column of cards scannable.
+    { type: 'actions', block_id: `card_${issue.key}`, elements: controls } as AnyBlock,
+    context([issue.key, filed ? `filed ${filed}` : undefined].filter(Boolean).join('  •  ')),
     { type: 'divider' },
   ];
 }
@@ -446,7 +459,7 @@ function openButton(url: string) {
   return {
     type: 'button' as const,
     action_id: ACTION.openIssue,
-    text: { type: 'plain_text' as const, text: 'Open' },
+    text: { type: 'plain_text' as const, text: 'Open in Jira' },
     url,
   };
 }
@@ -522,16 +535,12 @@ export function myBugsBlocks(input: {
 
 /**
  * Slack rejects a view over 100 blocks outright, which would leave App Home
- * blank rather than truncated. Each card is three blocks, so these keep the
- * total under the cap however high the caller's limit is set.
+ * blank rather than truncated. Each card is four blocks - body, buttons,
+ * footer, divider - and eleven more go on the header, the counts and the
+ * bucket headings, so 22 cards is the true ceiling; this leaves room to spare
+ * however high the caller's limit is set.
  */
-export const HOME_MAX_CARDS = 25;
-/**
- * A card with controls carries them in a row of their own, which needs a
- * fourth block each. Eleven blocks go on the header, the counts and the bucket
- * headings, so 22 such cards is the true ceiling; this leaves room to spare.
- */
-export const HOME_MAX_CARDS_WITH_CONTROLS = 18;
+export const HOME_MAX_CARDS = 18;
 export const HOME_BLOCK_LIMIT = 100;
 
 /**
@@ -610,12 +619,6 @@ export function homeView(input: {
     ...(input.allowDelete ? { allowDelete: true } : {}),
   };
 
-  // Controls make every card a block taller, so fewer cards fit the view.
-  const maxCards =
-    cards.moveTargets?.length || cards.allowDelete
-      ? HOME_MAX_CARDS_WITH_CONTROLS
-      : HOME_MAX_CARDS;
-
   const blocks: AnyBlock[] = [
     { type: 'header', text: { type: 'plain_text', text: 'Your bug reports' } },
     {
@@ -637,7 +640,7 @@ export function homeView(input: {
     ...cardSection({
       baseUrl: input.baseUrl,
       issues: input.issues,
-      limit: Math.min(input.limit, maxCards),
+      limit: Math.min(input.limit, HOME_MAX_CARDS),
       jqlUrl: input.jqlUrl,
       empty:
         'You have not reported any bugs yet. Hit *Report a bug*, or run `/bug` in a channel, ' +

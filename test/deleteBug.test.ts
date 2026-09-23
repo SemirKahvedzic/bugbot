@@ -6,7 +6,7 @@ import {
   bugCardBlocks,
   homeView,
   HOME_BLOCK_LIMIT,
-  HOME_MAX_CARDS_WITH_CONTROLS,
+  HOME_MAX_CARDS,
 } from '../src/format/slackBlocks.js';
 import { fixtureIssue, makeTestContext, type TestHarness } from './helpers/context.js';
 import { countOf, rows } from './helpers/db.js';
@@ -229,33 +229,28 @@ describe('bugCardBlocks: the Delete button', () => {
       allowDelete: true,
     });
 
-    expect(readOnly).toHaveLength(3);
-    expect(both).toHaveLength(4);
+    // The same shape whoever is looking: the controls only add elements to the
+    // row that Open in Jira is already in, never a block.
+    expect(readOnly.map((block) => block.type)).toEqual(['section', 'actions', 'context', 'divider']);
+    expect(both.map((block) => block.type)).toEqual(['section', 'actions', 'context', 'divider']);
 
-    // Title, then the metadata, then the controls: they sit under everything
-    // the card says about the bug rather than between the two halves of it.
-    expect(both.map((block) => block.type)).toEqual(['section', 'context', 'actions', 'divider']);
-
-    const actions = both[2] as { elements: Array<{ action_id: string }> };
-    // Move first, delete last, so the destructive one is not where the eye
-    // lands or the thumb reaches first.
+    const actions = both[1] as { elements: Array<{ action_id: string }> };
+    // Open first, then Move, then Delete last, so the destructive one is not
+    // where the eye lands or the thumb reaches first.
     expect(actions.elements.map((element) => element.action_id)).toEqual([
+      'open_issue',
       'move_issue',
       'delete_issue',
     ]);
   });
 
   it('sits in that same row when it is the only control', () => {
-    // Not in the accessory slot it would fit in: the controls belong in one
-    // place on every card, and one of them is not worth crowding the summary.
     const blocks = bugCardBlocks('https://jira.example', card, { allowDelete: true });
-    expect(blocks.map((block) => block.type)).toEqual([
-      'section',
-      'context',
-      'actions',
-      'divider',
+    const actions = blocks[1] as { elements: Array<{ action_id: string }> };
+    expect(actions.elements.map((element) => element.action_id)).toEqual([
+      'open_issue',
+      'delete_issue',
     ]);
-    expect(json(blocks)).not.toContain('open_issue');
   });
 });
 
@@ -297,7 +292,7 @@ describe('homeView: with both controls', () => {
     // Trimmed by the card cap, not by the emergency block trim - the last
     // block is the footer, not the "too many bugs" notice.
     expect(json(view)).not.toMatch(/Too many bugs/);
-    expect(json(view)).toContain(`SUP-${HOME_MAX_CARDS_WITH_CONTROLS}`);
+    expect(json(view)).toContain(`SUP-${HOME_MAX_CARDS}`);
   });
 });
 

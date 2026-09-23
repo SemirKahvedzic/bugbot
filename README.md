@@ -607,6 +607,13 @@ missing, because making that gap visible is the point of having a single funnel 
 render through one function, so the feed reads the same either way, and posting is claimed per
 issue so a redelivered webhook cannot produce a second card.
 
+Every feed card has a red bar down its left side, the same red as the dot on the App Home cards.
+Slack only paints that bar on a message *attachment*, so the card's blocks are posted inside one
+attachment, coloured `BUG_COLOR`, rather than on the message itself (`Notifier.post` with
+`color`). The message then carries no top-level text — with attachments and no blocks Slack would
+show it as a line above the card — and the attachment's `fallback` is the notification text
+instead. The card no longer opens with a divider: the bar is what keeps consecutive cards apart.
+
 It is a different channel from `SLACK_ANNOUNCE_CHANNEL`, which only carries triage escalations.
 **The bot has to be invited to it** — `chat:write` only posts where the bot is.
 
@@ -713,12 +720,17 @@ To Do / Under Triage / In Progress / Ready for Validation / Closed. SPEC 8 lists
 leaves *To Do* out; it is here because it is the board's first column and where backlog routing
 sends things, so bugs sit in it routinely and every one of them used to appear under *Other*.
 
-A card is the key and the summary on one line, then a line of metadata. The status is on the card
-only when the heading above does not already give it — under *Under Triage* it would be the same
-word twice, but *Closed* covers Done, Rejected, Duplicate and Cannot Reproduce and *In Progress*
-also matches In Review and In QA, so there it still has to be said. The status dot is on every
-card, and an unrecognised status gets a question mark rather than borrowing the dot that means
-"not started yet". Both union the issue keys BugBot
+A card is laid out like a monitoring alert: a red dot and the summary as the title, linked to
+Jira; under it one `Label: value` line each for status, priority, application, environment,
+device, severity, frequency and assignee; then a row of buttons — **Open in Jira** on every card,
+**Move to…** and **Delete** for a triager; then a small footer with the key and how long ago it
+was filed. The red dot is on every card because every card is a bug — a message attachment could
+paint a red bar down the side instead, but App Home is published as blocks and has no such bar.
+The status line is on the card only when the heading above does not already give it — under
+*Under Triage* it would be the same word twice, but *Closed* covers Done, Rejected, Duplicate and
+Cannot Reproduce and *In Progress* also matches In Review and In QA, so there it still has to be
+said. The status keeps its own dot on that line, and an unrecognised status gets a question mark
+rather than borrowing the dot that means "not started yet". Both union the issue keys BugBot
 recorded with `reporter = <accountId>` in Jira, so bugs filed both ways appear in one list. Any
 other status change sends one short DM, rate-limited to one per issue per five minutes.
 
@@ -797,9 +809,9 @@ granted in Jira and the bot cannot grant it to itself — until then, *Rejected*
 the move to make. A **404** means somebody deleted the issue in Jira first; the Slack side is
 cleaned up anyway and the reply says so, since that is the same end state rather than a failure.
 
-Cards carrying both controls are a block taller, and Slack rejects an over-long view whole rather
-than trimming it, so a triager's Home caps at `HOME_MAX_CARDS_WITH_CONTROLS` cards rather than
-`HOME_MAX_CARDS`.
+Every card is four blocks whoever is looking — the controls only add elements to the button row
+that Open in Jira is already in — and Slack rejects an over-long view whole rather than trimming
+it, so Home caps at `HOME_MAX_CARDS` cards for everyone.
 
 **`/bugstats`** prints intake by application and severity, the backlog/sprint/closed split, the
 median time in triage and the top three reporters. `/bugstats post` shares it in `#soft-world`.
